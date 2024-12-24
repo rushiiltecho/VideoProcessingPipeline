@@ -1,0 +1,8 @@
+videos/
+outputs_json/
+outputs/
+__pycache__/
+*.json
+*.mp4
+video_splitter.py
+*example.*
