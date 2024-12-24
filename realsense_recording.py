@@ -43,8 +43,15 @@ try:
         if key == ord('r'):
             if not is_recording:
                 # Start recording
-                out = cv2.VideoWriter(f'output_{time.time()}.mp4', fourcc, 30.0, (640, 480))
-                print("Recording started...")
+                filename = f'output_{int(time.time())}.mp4'
+                out = cv2.VideoWriter(filename, fourcc, 30.0, (color_image.shape[1], color_image.shape[0]))
+                
+                # Debugging check: Confirm if the VideoWriter was successfully opened
+                if not out.isOpened():
+                    print("Error: VideoWriter failed to initialize.")
+                    break
+                
+                print(f"Recording started... Saving to {filename}")
                 is_recording = True
             else:
                 # Stop recording
