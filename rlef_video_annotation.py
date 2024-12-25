@@ -157,7 +157,7 @@ if __name__ == "__main__":
 
     print(f"================ PAYLOAD ================ +\n{payload['question']}\n================ PAYLOAD ================")
     analyzer = VideoAnalyzer(payload=payload)
-    video_file_path = 'C:\\Users\\Rushiil Bhatnagar\\Downloads\\object_detection\\object_detection\\videos\\pouring_1.mp4'
+    video_file_path = 'C:\\Users\\Rushiil Bhatnagar\\Downloads\\object_detection\\object_detection\\videos\\pick_and_place_4.mp4'
     gcp_url = analyzer.upload_video_to_bucket("test1.mp4", video_file_path)
     video_annotations = analyzer.get_ellm_response()
     uploader = VideoUploader(video_file_path, video_annotations)
