@@ -106,6 +106,17 @@ class VideoAnalyzer:
         gs_url = f"gs://{bucket.name}/{destination_blob_name}"
         return gs_url
 
+    def set_payload_from_dict(self,payload):
+        self.payload = payload
+
+    def set_payload_from_filepath(self, payload_filepath):
+        self.payload_filepath = payload_filepath
+        payload = None
+        with open(payload_filepath, "r") as file:
+            payload = json.load(file)
+        
+        self.payload = payload
+
     def get_ellm_response(self):
         response = requests.post(self.egpt_url, headers=self.headers, data=json.dumps(self.payload))
         # print(response.text)
@@ -185,10 +196,13 @@ class VideoAnalyzer:
         Input Format: str
         Output Format: dict (parsed JSON object)
         """
+        print(f"response_text: {response_text}")
         parsed_response = parse_to_json(response_text)
+        print(f"parsed_response: {parsed_response}")
         if parsed_response:
             try:
                 data = json.loads(parsed_response)
+                print("DATA ========== \n", data)
                 return data
             except json.JSONDecodeError as e:
                 print("Failed to parse JSON:", e)
@@ -208,6 +222,37 @@ class VideoAnalyzer:
         with open(file_path, 'w') as json_file:
             json.dump(data, json_file, indent=4)
     
+    def get_gemini_response(self, gcp_url):
+        vision_model_name = "gemini-1.5-flash-002"
+        output_format= '''
+        {
+            overall_task_name: <a descriptive name of overall task in lower case>,
+            objects: [
+                <object_name>
+                ...
+            ]
+            <action_name> : [
+                {
+                    start_time:<start_timestamp>,
+                    end_time: <end_timestamp>,
+                    object_name: <object_name>,
+                    notes: <notes>,
+                },
+                ...
+            ],
+            ...
+        }
+        '''
+        prompt = f'''the video contains a demonstration of a hunman doing a task, can you name the task and also name the objects to track in the video and also the important timestamps of what actions are happening? divide it in based on action , picking it up , placing it, therefore i want output in a format or classified label , object name and timestamps in a list note : dont focus on robotic arm , only focus on other objects and human demonistrations
+        EXAMPLE OUTPUT FORMAT:
+        {output_format}
+        '''
+        response = self.generate_text(vision_model_name=vision_model_name,gcp_url=gcp_url,prompt=prompt)
+        parsed_data = self.parse_response(response_text=response)
+
+        print(parsed_data)
+        return parsed_data
+
     def convert_time_to_seconds(self, time):
         """utility function"""
         try:

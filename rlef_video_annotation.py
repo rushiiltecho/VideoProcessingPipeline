@@ -1,7 +1,7 @@
 import base64
 import json
 import os
-from typing import Dict, List
+from typing import Dict, Optional, AnyStr
 import json_repair
 import requests
 
@@ -9,7 +9,7 @@ from vdeo_analysis_ellm_sudio import VideoAnalyzer
 
 
 class VideoUploader:
-    def __init__(self, filepath, video_annotations):
+    def __init__(self, filepath:Optional[str]= None, video_annotations:Optional[dict]=None):
         self.filepath = filepath
         self.video_annotations = video_annotations
 
@@ -37,7 +37,7 @@ class VideoUploader:
             'tag': 'loaner boxes',
             'prediction': 'predicted',
             'confidence_score': '100',
-            'videoAnnotations': self.generate_video_annotations()
+            'videoAnnotations': self._deprecated_generate_video_annotations()
         }
 
         files = {
@@ -49,7 +49,57 @@ class VideoUploader:
         print(response.text)
         return response.status_code
 
-    def generate_video_annotations(self):
+    def upload_to_rlef(self, url,filepath, video_annotations):
+        self.video_annotations = video_annotations
+        self.filepath = filepath
+        converted_filepath = self.filepath
+        self.convert_video(self.filepath, converted_filepath)
+
+        payload = {
+            'model': '67695dc462913593227a4227',
+            'status': 'backlog',
+            'csv': 'csv',
+            'label': 'object_grab',
+            'tag': 'loaner boxes',
+            'prediction': 'predicted',
+            'confidence_score': '100',
+            'videoAnnotations': self.generate_video_annotations(video_annotations)
+        }
+
+        files = {
+            'resource': (converted_filepath, open(converted_filepath, 'rb'))
+        }
+
+        response = requests.post(
+            url, 
+            headers={},
+            data=payload,
+            files=files
+        )
+
+        print(response.text)
+        return response.status_code
+
+    def generate_video_annotations(self, video_annotations):
+        video_annotations_list = []
+        for i in video_annotations.keys():
+            if isinstance(video_annotations[i], list) and all(isinstance(item, dict) for item in video_annotations[i]):
+                for j in range(len(video_annotations[i])):
+                    # print(self.video_annotations[i][j], i)
+                    video_annotations_list.append({
+                        "label": i,
+                        "tag": video_annotations[i][j]['object_name'],
+                        "annotationPrediction": {
+                            "startTimeInSeconds": self.convert_time_to_seconds(video_annotations[i][j]['start_time']),
+                            "endTimeInSeconds": self.convert_time_to_seconds(video_annotations[i][j]['end_time'])
+                        }
+                    })
+
+        print("VIDEO ANNOTATIONS",json_repair.repair_json(str(video_annotations_list)))
+        return str(video_annotations_list).replace("'", '"')
+
+
+    def _deprecated_generate_video_annotations(self):
         video_annotations_list = []
         for i in self.video_annotations.keys():
             if isinstance(self.video_annotations[i], list) and all(isinstance(item, dict) for item in self.video_annotations[i]):
@@ -91,8 +141,15 @@ class VideoUploader:
     #     return str(video_annotations).replace("'", '"')
 
     def convert_time_to_seconds(self, time):
-        m, s = map(int, time.split(':'))
-        return m * 60 + s
+        time_parts = time.split(':')
+        if len(time_parts) == 3:
+            h, m, s = map(int, time_parts)
+            return h * 3600 + m * 60 + s
+        elif len(time_parts) == 2:
+            m, s = map(int, time_parts)
+            return m * 60 + s
+        else:
+            raise ValueError("Invalid time format")
 
 sample_video_annotations = {
     "overall_task_name": "Object Rearrangement",
@@ -144,7 +201,7 @@ sample_video_annotations = {
 }
 
 if __name__ == "__main__":
-    url = "https://dev-egpt.techo.camp/predict"
+    url = "https://autoai-backend-exjsxe2nda-uc.a.run.app/resource/"
     headers = {
         "Content-Type": "application/json"
     }
@@ -157,9 +214,10 @@ if __name__ == "__main__":
 
     print(f"================ PAYLOAD ================ +\n{payload['question']}\n================ PAYLOAD ================")
     analyzer = VideoAnalyzer(payload=payload)
-    video_file_path = 'C:\\Users\\Rushiil Bhatnagar\\Downloads\\object_detection\\object_detection\\videos\\pick_and_place_4.mp4'
+    video_file_path = 'C:\\Users\\Rushiil Bhatnagar\\Downloads\\object_detection\\object_detection\\videos\\pick_and_place_1.mp4'
     gcp_url = analyzer.upload_video_to_bucket("test1.mp4", video_file_path)
-    video_annotations = analyzer.get_ellm_response()
+    # video_annotations = analyzer.get_ellm_response()
+    video_annotations = analyzer.get_gemini_response(gcp_url=gcp_url)
     uploader = VideoUploader(video_file_path, video_annotations)
-    status_code = uploader.upload_to_rlef()
+    status_code = uploader.upload_to_rlef(url, video_file_path, video_annotations)
     print(status_code)

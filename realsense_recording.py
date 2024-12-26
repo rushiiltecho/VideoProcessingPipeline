@@ -1,3 +1,5 @@
+from rlef_video_annotation import VideoUploader
+from vdeo_analysis_ellm_sudio import VideoAnalyzer
 import pyrealsense2 as rs
 import cv2
 import numpy as np
@@ -42,8 +44,16 @@ class RealSenseRecorder:
         self.is_recording = False
         self.h5_file = None
         self.video_writer = None
+        self.current_savepath = None
         self.depth_video_writer = None  # For visualization of depth data
-        
+        self.recording_stopped_callback = None
+
+    def set_recording_stopped_callback(self, callback):
+        """
+        Register a callback to be invoked each time a recording stops.
+        """
+        self.recording_stopped_callback = callback
+
     def _create_intrinsics_dict(self):
         """Create a dictionary of camera intrinsics"""
         return {
@@ -77,7 +87,7 @@ class RealSenseRecorder:
         # Create recording directory
         recording_dir = os.path.join(self.output_dir, self.recording_id)
         os.makedirs(recording_dir, exist_ok=True)
-        
+        self.current_savepath = recording_dir
         # Initialize HDF5 file
         h5_path = os.path.join(recording_dir, "frames.h5")
         self.h5_file = h5py.File(h5_path, 'w')
@@ -160,7 +170,7 @@ class RealSenseRecorder:
             self.depth_video_writer.release()
             self.depth_video_writer = None
             
-        # Update metadata with end time and frame count
+        # Update metadata
         if self.recording_id:
             metadata_path = os.path.join(self.output_dir, self.recording_id, "metadata.json")
             if os.path.exists(metadata_path):
@@ -175,6 +185,10 @@ class RealSenseRecorder:
             
         self.is_recording = False
         print(f"Recording stopped. Frames captured: {self.frame_count}")
+
+        # <--- Here is the important addition:
+        if self.recording_stopped_callback is not None:
+            self.recording_stopped_callback()
 
     def _normalize_depth_for_display(self, depth_image):
         """Convert depth image to colorized visualization"""
@@ -258,6 +272,30 @@ class RealSenseRecorder:
             self.pipeline.stop()
             cv2.destroyAllWindows()
 
+    def get_current_savepath(self,):
+        return self.current_savepath
+
+    def get_current_recording_id(self,):
+        return self.recording_id
+
+    def get_ellm_studio_analysis(self, analyzer: VideoAnalyzer, rlef_uploader:VideoUploader, payload_filepath="payload.json"):
+        payload = None
+        try:
+            #TODO: this is not the right way to do it, correct the videoanalyzer and the VideoUploader stuff in main.
+            color_video_filepath = f'{self.current_savepath}/color.mp4'
+            gcp_url = analyzer.upload_video_to_bucket("test1.mp4", color_video_filepath)
+            video_annotations = analyzer.get_ellm_response()
+            status_code = rlef_uploader.upload_to_rlef()
+            print(f'status_code for RLEF Upload: {status_code}')
+        except Exception as e:
+            pass
+
+    def send_annotations_to_rlef(self,):
+        pass
+
+    def prepare_annotations(self,):
+        pass
+
 if __name__ == "__main__":
     recorder = RealSenseRecorder()
-    recorder.capture_frames()
+    recorder.capture_frames() 
