@@ -1,11 +1,15 @@
+import json
 import streamlit as st
 import tempfile
 import os
 
+from rlef_video_annotation import VideoUploader
+from vdeo_analysis_ellm_sudio import VideoAnalyzer
+
 def main():
     st.title("Video Stream and Recording UI")
 
-    mode = st.selectbox("Select Mode", ("Live Video Feed", "Upload Video File"))
+    mode = st.selectbox("Select Mode", ("Upload Video File"))#, "Upload Video File"))
 
     if mode == "Live Video Feed":
         handle_live_feed()
@@ -57,8 +61,30 @@ def handle_uploaded_file():
         tfile.write(uploaded_file.read())
         video_path = tfile.name
         st.success(f"Video uploaded successfully: {video_path}")
+        print(f"video_path: {video_path}")
+        payload = None
+        # Load the payload from a JSON file
+        with open("payload.json", "r") as file:
+            payload = json.load(file)
 
+        # payload["question"] = gcp_url
         st.video(video_path)
+        analyzer = VideoAnalyzer(payload=payload)
+        gcp_url = analyzer.upload_video_to_bucket("test1.mp4", video_path)
+        response_annotations = None
+        if not response_annotations:
+            st.html('<b>Getting the ELLM Response...</b>')
+        response_annotations = analyzer.get_gemini_response(gcp_url=gcp_url)
+        # print(f'ELLM RESPONSE: {response}')
+        if response_annotations:    
+            st.json(response_annotations)
+        
+        rlef_annotations = VideoUploader()
+        status = rlef_annotations.upload_to_rlef(url="https://autoai-backend-exjsxe2nda-uc.a.run.app/resource/",filepath= video_path, video_annotations=response_annotations)
+        st.text(f'RLEF Annotated Data Upload Status Code: {status}')
+
+
+        
 
 if __name__ == "__main__":
     main()
