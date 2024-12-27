@@ -53,23 +53,48 @@ def handle_live_feed():
 
     # Columns for the start/stop buttons
     col1, col2 = st.columns(2)
+    # with col1:
+    #     if st.button("Start Recording"):
+    #         if not recording:
+    #             # Create a temp file for saving recorded video
+    #             output_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+    #             st.success(f"Recording started. Output file: {output_file.name}")
+    #             recording = True
+
+    #             # Set up video writer to save the feed
+    #             # Adjust fps, frame size, and fourcc as needed
+    #             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    #             frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    #             frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    #             writer = cv2.VideoWriter(
+    #                 output_file.name,
+    #                 fourcc,
+    #                 20.0,  # frames per second
+    #                 (frame_width, frame_height),
+    #             )
+
     with col1:
         if st.button("Start Recording"):
             if not recording:
-                # Create a temp file for saving recorded video
-                output_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-                st.success(f"Recording started. Output file: {output_file.name}")
                 recording = True
 
-                # Set up video writer to save the feed
-                # Adjust fps, frame size, and fourcc as needed
-                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                # 1) Use a consistent FourCC + extension
+                fourcc = cv2.VideoWriter_fourcc(*"XVID")  # or "MJPG", "avc1", etc.
+                
+                # 2) Generate a unique .avi path, no open file handle
+                fd, path = tempfile.mkstemp(suffix=".mp4")
+                os.close(fd)  # release the file descriptor immediately
+                output_file_path = path
+
+                st.success(f"Recording started. Output file: {output_file_path}")
+                
                 frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
                 writer = cv2.VideoWriter(
-                    output_file.name,
+                    output_file_path,
                     fourcc,
-                    20.0,  # frames per second
+                    20.0,  # FPS
                     (frame_width, frame_height),
                 )
 
