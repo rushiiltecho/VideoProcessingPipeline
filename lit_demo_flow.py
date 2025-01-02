@@ -63,7 +63,7 @@ def cleanup_existing_cameras():
     except Exception as e:
         st.warning(f"Warning during camera cleanup: {str(e)}")
 
-def initialize_realsense():
+def _deprecated_initialize_realsense():
     """Initialize RealSense camera with error handling"""
     try:
         cleanup_existing_cameras()
@@ -237,62 +237,6 @@ def process_saved_recording(video_path):
 
 
 
-
-
-
-
-
-
-
-
-class RealSenseManager:
-    def __init__(self):
-        self.pipeline = None
-        self.config = None
-        
-    def initialize_camera(self):
-        """Initialize the RealSense camera with proper resource cleanup"""
-        try:
-            # First, clean up any existing pipelines
-            if self.pipeline:
-                self.pipeline.stop()
-                self.pipeline = None
-            
-            # Reset all RealSense devices
-            ctx = rs.context()
-            devices = ctx.query_devices()
-            for dev in devices:
-                dev.hardware_reset()
-            time.sleep(2)  # Give devices time to reset
-            
-            # Initialize new pipeline and config
-            self.pipeline = rs.pipeline()
-            self.config = rs.config()
-            self.config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
-            
-            # Try to start the pipeline
-            self.pipeline.start(self.config)
-            return True
-            
-        except Exception as e:
-            if self.pipeline:
-                try:
-                    self.pipeline.stop()
-                except:
-                    pass
-                self.pipeline = None
-            st.error(f"Failed to initialize camera: {str(e)}")
-            return False
-    
-    def cleanup(self):
-        """Cleanup camera resources"""
-        if self.pipeline:
-            try:
-                self.pipeline.stop()
-            except:
-                pass
-            self.pipeline = None
-
 def handle_live_feed():
     """Handles live feed with improved error handling and resource management"""
     st.subheader("Live Video Feed")
@@ -378,6 +322,53 @@ def handle_live_feed():
             st.write(f"Recording saved to: {output_file_path}")
 
 
+class RealSenseManager:
+    def __init__(self):
+        self.pipeline = None
+        self.config = None
+        
+    def initialize_camera(self):
+        """Initialize the RealSense camera with proper resource cleanup"""
+        try:
+            # First, clean up any existing pipelines
+            if self.pipeline:
+                self.pipeline.stop()
+                self.pipeline = None
+            
+            # Reset all RealSense devices
+            ctx = rs.context()
+            devices = ctx.query_devices()
+            for dev in devices:
+                dev.hardware_reset()
+            time.sleep(2)  # Give devices time to reset
+            
+            # Initialize new pipeline and config
+            self.pipeline = rs.pipeline()
+            self.config = rs.config()
+            self.config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+            
+            # Try to start the pipeline
+            self.pipeline.start(self.config)
+            return True
+            
+        except Exception as e:
+            if self.pipeline:
+                try:
+                    self.pipeline.stop()
+                except:
+                    pass
+                self.pipeline = None
+            st.error(f"Failed to initialize camera: {str(e)}")
+            return False
+    
+    def cleanup(self):
+        """Cleanup camera resources"""
+        if self.pipeline:
+            try:
+                self.pipeline.stop()
+            except:
+                pass
+            self.pipeline = None 
 
 def main():
     st.set_page_config(page_title="Video Stream and Recording UI", layout="wide")

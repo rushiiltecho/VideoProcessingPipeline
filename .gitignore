@@ -10,3 +10,4 @@ recordings/
 *.log
 *.jpg
 *.pt
+*_constant_*

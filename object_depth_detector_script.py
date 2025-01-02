@@ -3,7 +3,7 @@ import numpy as np
 from ultralytics import YOLO
 from pathlib import Path
 import torch
-from utils import get_pixel_3d_coordinates
+from utils import get_pixel_3d_coordinates, transform_coordinates
 
 class ObjectDepthDetector:
     def __init__(self, recording_dir, model_name="yolov8x.pt"):
@@ -72,7 +72,7 @@ class ObjectDepthDetector:
             
         return frame
 
-    def detect_object_center(self, frame, target_class):
+    def get_object_center(self, frame, target_class):
         """
         Detect object in frame and return its center point
         
@@ -129,7 +129,7 @@ class ObjectDepthDetector:
         frame = self.get_frame_at_time(time_seconds)
         
         # Detect object and get center point
-        center_x, center_y, box, confidence = self.detect_object_center(
+        center_x, center_y, box, confidence = self.get_object_center(
             frame, target_class
         )
         
@@ -160,7 +160,7 @@ class ObjectDepthDetector:
         """
         # Get frame and detect object
         frame = self.get_frame_at_time(time_seconds)
-        center_x, center_y, box, confidence = self.detect_object_center(
+        center_x, center_y, box, confidence = self.get_object_center(
             frame, target_class
         )
         
@@ -194,19 +194,23 @@ class ObjectDepthDetector:
         
         return frame
 
+
+
 # Example usage
 if __name__ == "__main__":
-    recording_dir = "recordings/20241227_205319"
+    recording_dir = "recordings/20250102_223743"
     detector = ObjectDepthDetector(
         recording_dir,
-        model_name="yolov8x.pt"  # Using YOLOv8 extra large model
+        model_name="yolov8x-worldv2.pt"  # Using YOLOv8 extra large model
     )
     
     # Get 3D coordinates of a cup at 5 seconds
     try:
+        target_class = "bottle"
+        time_seconds = 4.5
         results = detector.get_object_3d_coordinates(
-            time_seconds=2.0,
-            target_class="cup"  # Must be a COCO class
+            time_seconds=time_seconds,
+            target_class=target_class  # Must be a COCO class
         )
         
         print(f"Object detected at {results['actual_time']:.3f} seconds:")
@@ -219,10 +223,16 @@ if __name__ == "__main__":
         
         # Save visualization
         detector.visualize_detection(
-            time_seconds=2,
-            target_class="cup",
-            output_path="detection_visualization.jpg"
+            time_seconds=time_seconds,
+            target_class=target_class,
+            output_path=f"{recording_dir}/detection_visualization.jpg"
         )
+
+        transformed_point = transform_coordinates(
+            results["coordinates"]
+        )
+
+        print(f"Transformed coordinates: {list(transformed_point)}")
         
     except Exception as e:
         print(f"Error: {str(e)}")
