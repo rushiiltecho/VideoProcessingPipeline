@@ -14,6 +14,8 @@ from utils import convert_video
 from vdeo_analysis_ellm_sudio import VideoAnalyzer
 from realsense_recording import RealSenseRecorder
 from contextlib import contextmanager
+from dsr_control_api.dsr_control_api.cobotclient import CobotClient
+
 
 
 
@@ -73,7 +75,7 @@ def _deprecated_initialize_realsense():
     except Exception as e:
         return None, str(e)
 
-def handle_live_feed():
+def __handle_live_feed():
     """
     Demonstrates a minimal approach for displaying and optionally 
     recording from a live video feed using OpenCV and Streamlit.
@@ -177,6 +179,9 @@ def handle_uploaded_file():
     tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
     tfile.write(uploaded_file.read())
     video_path = tfile.name
+    original_path = os.path.abspath(uploaded_file.name)
+    upload_directory = os.path.dirname(original_path)
+    st.write(f"Original file path: {original_path} in {upload_directory}")
     convert_video(video_path, video_path)
 
     st.success(f"Video uploaded successfully")
@@ -371,6 +376,9 @@ class RealSenseManager:
             self.pipeline = None 
 
 def main():
+    cobot_client = CobotClient("localhost", 3000)
+    #TODO: use this to send the location to Simulation team.
+    # cobot_client.known_object_location()
     st.set_page_config(page_title="Video Stream and Recording UI", layout="wide")
     
     if 'run' not in st.session_state:
