@@ -1,4 +1,5 @@
 from rlef_video_annotation import VideoUploader
+from utils import convert_video
 from vdeo_analysis_ellm_sudio import VideoAnalyzer
 import pyrealsense2 as rs
 import cv2
@@ -128,7 +129,7 @@ class RealSenseRecorder:
         self.h5_file.attrs['height'] = self.height
         
         # Initialize video writers
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        fourcc = cv2.VideoWriter_fourcc('m', 'p', '4', 'v')
         self.video_writer = cv2.VideoWriter(
             os.path.join(recording_dir, "color.mp4"),
             fourcc, self.fps, (self.width, self.height)
@@ -154,6 +155,8 @@ class RealSenseRecorder:
 
     def stop_recording(self):
         """Stop the current recording session"""
+        recording_dir = os.path.join(self.output_dir, self.recording_id)
+
         if not self.is_recording:
             return
             

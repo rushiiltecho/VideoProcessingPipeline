@@ -7,7 +7,6 @@ if [ -z "$(conda info --envs | grep video_analysis)" ]; then
 fi
 
 # Step 2: Activate the environment and install requirements
-# source C:/Users/Rushiil\ Bhatnagar/anaconda3/etc/profile.d/conda.sh # this line was only for a windows user. keep it commented if on Ubuntu
 conda activate video_analysis
 pip install -r requirements.txt
 

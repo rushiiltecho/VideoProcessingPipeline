@@ -18,6 +18,7 @@ class VideoUploader:
     def _convert_video(self, input_path, output_path):
         os.system(f"ffmpeg -i '{input_path}' -c:v libx264 '{output_path}'")
 
+
     def convert_video(self, input_path, output_path):
         # Create a temporary file
         temp_output_path = tempfile.mktemp(suffix='.mp4')
