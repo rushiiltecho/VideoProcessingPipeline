@@ -121,7 +121,7 @@ class VideoAnalyzer:
         response = requests.post(self.egpt_url, headers=self.headers, data=json.dumps(self.payload))
         # print(response.text)
         processed_response = self.process_ellm_response(response.text)
-        print(type(processed_response))
+        # print(type(processed_response))
         # print(f"RAW RESPONSE: {processed_response}")
         return processed_response
 
@@ -153,7 +153,7 @@ class VideoAnalyzer:
                         response_content= chat_history[i]["content"]
                         break
 
-                print("response_content", response_content)
+                # print("response_content", response_content)
 
         except:
             pass
@@ -196,13 +196,13 @@ class VideoAnalyzer:
         Input Format: str
         Output Format: dict (parsed JSON object)
         """
-        print(f"response_text: {response_text}")
+        # print(f"response_text: {response_text}")
         parsed_response = parse_to_json(response_text)
-        print(f"parsed_response: {parsed_response}")
+        # print(f"parsed_response: {parsed_response}")
         if parsed_response:
             try:
                 data = json.loads(parsed_response)
-                print("DATA ========== \n", data)
+                # print("DATA ========== \n", data)
                 return data
             except json.JSONDecodeError as e:
                 print("Failed to parse JSON:", e)
@@ -358,7 +358,7 @@ def main():
     '''
     
     response_text = analyzer.generate_text("gemini-1.5-flash-002", gcp_url, prompt)
-    print(response_text)
+    # print(response_text)
 
     data = analyzer.parse_response(response_text)
     analyzer.split_video_into_parts(video_file_path=video_file_path,parsed_json=data)
@@ -382,6 +382,6 @@ if __name__ == "__main__":
     print(f"================ PAYLOAD ================ +\n{payload['question']}\n================ PAYLOAD ================")
     analyzer = VideoAnalyzer(payload=payload)
     response = analyzer.get_ellm_response()
-    
+    print(response)
     
     # main()

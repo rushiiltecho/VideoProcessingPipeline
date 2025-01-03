@@ -47,7 +47,6 @@ def convert_video(input_path, output_path):
     else:
         print("Conversion failed.")
 
-
 def get_pixel_3d_coordinates(recording_dir, time_seconds, pixel_x, pixel_y):
     """
     Get the 3D coordinates (X, Y, Z) of a specific pixel at a specific time in the video
@@ -55,63 +54,62 @@ def get_pixel_3d_coordinates(recording_dir, time_seconds, pixel_x, pixel_y):
     Args:
         recording_dir (str): Path to the recording directory
         time_seconds (float): Time in seconds from the start of the video
-        pixel_x (int): X coordinate of the pixel
-        pixel_y (int): Y coordinate of the pixel
+        pixel_x (Optional[float]): X coordinate of the pixel
+        pixel_y (Optional[float]): Y coordinate of the pixel
     
     Returns:
         tuple: ((X, Y, Z) coordinates in meters, actual_time in seconds)
+               Returns (None, actual_time) if pixel coordinates are None
     """
-    # Open the H5F file
-    h5_path = f"{recording_dir}/frames.h5"
-    with h5py.File(h5_path, 'r') as h5_file:
-        # Get timestamps array
-        timestamps = h5_file['timestamps'][:]
-        
-        # Convert timestamps to seconds from start
-        frame_times = timestamps[:, 0] - timestamps[0, 0]
-        
-        # Find the closest frame to the requested time
-        closest_frame = np.argmin(np.abs(frame_times - time_seconds))
-        
-        # Get the depth frame
-        depth_frame = h5_file['depth_frames'][closest_frame]
-        
-        # Get actual timestamp of the frame we're using
-        actual_time = frame_times[closest_frame]
-        print(f"Using frame at {actual_time:.3f} seconds (requested: {time_seconds:.3f} seconds)")
-        
-        # Get camera intrinsics from metadata
-        intrinsics_str = h5_file.attrs['camera_intrinsics']
-        intrinsics_dict = json.loads(intrinsics_str)
-        depth_scale = intrinsics_dict['depth_scale']
-        
-        # Create RealSense intrinsics object
-        depth_intrinsics = rs.intrinsics()
-        d_intr = intrinsics_dict['depth_intrinsics']
-        depth_intrinsics.width = h5_file.attrs['width']
-        depth_intrinsics.height = h5_file.attrs['height']
-        depth_intrinsics.ppx = d_intr['ppx']
-        depth_intrinsics.ppy = d_intr['ppy']
-        depth_intrinsics.fx = d_intr['fx']
-        depth_intrinsics.fy = d_intr['fy']
-        depth_intrinsics.model = rs.distortion.brown_conrady
-        depth_intrinsics.coeffs = d_intr['coeffs']
-        
-        # Get depth value for the pixel (in millimeters)
-        depth_value = depth_frame[pixel_y, pixel_x]
-        
-        # Convert depth to meters
-        depth_in_meters = depth_value * depth_scale
-        
-        # Deproject pixel to 3D point
-        point_3d = rs.rs2_deproject_pixel_to_point(
-            depth_intrinsics,
-            [pixel_x, pixel_y],
-            depth_in_meters
-        )
-        return point_3d, actual_time
-
-
+    try:
+        # Early return if pixel coordinates are None
+        if pixel_x is None or pixel_y is None:
+            print("Warning: Received None for pixel coordinates")
+            return None, time_seconds
+            
+        with h5py.File(f"{recording_dir}/frames.h5", 'r') as h5_file:
+            timestamps = h5_file['timestamps'][:]
+            frame_times = timestamps[:, 0] - timestamps[0, 0]
+            closest_frame = np.argmin(np.abs(frame_times - time_seconds))
+            depth_frame = h5_file['depth_frames'][closest_frame]
+            actual_time = frame_times[closest_frame]
+            
+            intrinsics_str = h5_file.attrs['camera_intrinsics']
+            intrinsics_dict = json.loads(intrinsics_str)
+            depth_scale = intrinsics_dict['depth_scale']
+            
+            depth_intrinsics = rs.intrinsics()
+            d_intr = intrinsics_dict['depth_intrinsics']
+            depth_intrinsics.width = h5_file.attrs['width']
+            depth_intrinsics.height = h5_file.attrs['height']
+            depth_intrinsics.ppx = d_intr['ppx']
+            depth_intrinsics.ppy = d_intr['ppy']
+            depth_intrinsics.fx = d_intr['fx']
+            depth_intrinsics.fy = d_intr['fy']
+            depth_intrinsics.model = rs.distortion.brown_conrady
+            depth_intrinsics.coeffs = d_intr['coeffs']
+            
+            # Ensure pixel coordinates are within bounds
+            pixel_x = min(max(0, float(pixel_x)), depth_intrinsics.width - 1)
+            pixel_y = min(max(0, float(pixel_y)), depth_intrinsics.height - 1)
+            
+            # Get depth value and convert to meters
+            depth_value = float(depth_frame[int(pixel_y), int(pixel_x)]) * depth_scale
+            
+            # Deproject pixel to 3D point
+            point_3d = rs.rs2_deproject_pixel_to_point(
+                depth_intrinsics,
+                [float(pixel_x), float(pixel_y)],
+                depth_value
+            )
+            
+            return point_3d, actual_time
+            
+    except Exception as e:
+        print(f"Error in get_pixel_3d_coordinates: {e}")
+        return None, time_seconds
+    
+    
 def _transform_coordinates(point_xyz, calib_matrix_x=calib_matrix_x, calib_matrix_y=calib_matrix_y):
     """
     Transform point through both calibration matrices
@@ -162,7 +160,7 @@ def transform_coordinates(point):
     B[:3, 3] = point
     A = calib_matrix_y @ B @ np.linalg.inv(calib_matrix_x)
     transformed_point = A[:3, 3] * 1000
-    return transformed_point[::-1]/1000
+    return transformed_point/1000
 
 def parse_list_boxes(text:str):
   result = []
@@ -299,6 +297,18 @@ def normalize_box(box, width=640, height=480):
     return normalized_box
 
 # REGION SELECTOR UTILS ============================================================
+
+def convert_time_to_seconds(time):
+    time_parts = time.split(':')
+    if len(time_parts) == 3:
+        h, m, s = map(int, time_parts)
+        return h * 3600 + m * 60 + s
+    elif len(time_parts) == 2:
+        m, s = map(int, time_parts)
+        return m * 60 + s
+    else:
+        raise ValueError("Invalid time format")
+
 
 
 if __name__ == "__main__":

@@ -76,12 +76,12 @@ class RealSenseRecorder:
             "depth_scale": self.depth_scale
         }
 
-    def start_recording(self):
+    def start_recording(self, recording_id= None):
         """Start a new recording session"""
         if self.is_recording:
             return
             
-        self.recording_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.recording_id = recording_id if recording_id else datetime.now().strftime("%Y%m%d_%H%M%S")
         self.frame_count = 0
         
         # Create recording directory
