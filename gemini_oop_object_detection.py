@@ -10,6 +10,7 @@ import os
 import torch 
 
 from gemini_api_key_example import GEMINI_API_KEY
+from vdeo_analysis_ellm_sudio import VideoAnalyzer
 from utils import get_pixel_3d_coordinates, normalize_box, plot_bounding_boxes, transform_coordinates
 
 class ObjectDetector:
@@ -231,10 +232,29 @@ class ObjectDetector:
             "box": box.cpu().numpy() if isinstance(box, torch.Tensor) else box
         }
 
+def ellm_studio_test(recording_dir:str):
+    payload = None
+
+    # Load the payload from a JSON file
+    with open("payload.json", "r") as file:
+        payload = json.load(file)
+
+    print(f"================ PAYLOAD ================ +\n{payload['question']}\n================ PAYLOAD ================")
+    analyzer = VideoAnalyzer(payload=payload)
+    # gcp_url = analyzer.upload_video_to_bucket("test1.mp4", f'{recording_dir}/color.mp4')
+    response = analyzer.get_gemini_response()
+    # print(response)
+    return response
+
 # Example usage:
 if __name__ == "__main__":
     recording_dir = 'recordings/20241225_140621'
-    
+    response = ellm_studio_test(recording_dir=recording_dir)
+    # print(response)
+    classes_to_detect = response['objects']
+    # TODO: Modify Prompt: get actions in agent response as a separate field to use differently, just like objects
+    actions = list(response.keys())[2:]
+    # print(actions)
     # Initialize detector
     detector = ObjectDetector(api_key=GEMINI_API_KEY, recording_dir= recording_dir)
 
