@@ -9,6 +9,7 @@ from typing import Dict, List, Tuple, Optional
 import os
 import torch 
 
+from gemini_api_key_example import GEMINI_API_KEY
 from utils import get_pixel_3d_coordinates, normalize_box, plot_bounding_boxes, transform_coordinates
 
 class ObjectDetector:
@@ -95,7 +96,7 @@ class ObjectDetector:
         """Configure Gemini with the provided API key."""
         genai.configure(api_key=api_key)
     
-    def detect_objects(self, image_path: str) -> Dict:
+    def detect_objects(self, image_path: Optional[str]= None, image: Optional[Image.Image] = None) -> List[Dict]:
         """
         Detect objects in the given image using Gemini model.
         
@@ -106,17 +107,20 @@ class ObjectDetector:
         Returns:
             Dict: Dictionary containing detected objects and their bounding boxes
         """
-        im = Image.open(image_path)
-        prompt_text = self.default_prompt
-        
-        response = self.model.generate_content([im, prompt_text])
-        print(response.text)
-        boxes = json.loads(json_repair.repair_json(self._parse_to_json(response.text)))
-        self.boxes= boxes
-        return boxes
+        try:
+            im = image if image else Image.open(image_path)
+            prompt_text = self.default_prompt
+            
+            response = self.model.generate_content([im, prompt_text])
+            print(response.text)
+            boxes = json.loads(json_repair.repair_json(self._parse_to_json(response.text)))
+            self.boxes= boxes
+            return boxes
+        except Exception as e:
+            print(f"EXCEPTION during detect_objects: {e}")
     
     def visualize_detections(self, 
-                           image_path: str, 
+                           image: Image.Image, 
                            boxes: Dict, 
                            output_dir: str,
                            filename: str = 'detection_visualization.jpg') -> Tuple[int, int]:
@@ -132,7 +136,7 @@ class ObjectDetector:
         Returns:
             Tuple[int, int]: Image dimensions (width, height)
         """
-        im = Image.open(image_path)
+        im = image # Image.open(image_path)
         self._plot_bounding_boxes(im, list(boxes.items()))
         
         os.makedirs(output_dir, exist_ok=True)
@@ -161,7 +165,7 @@ class ObjectDetector:
             return None
         return {i: normalize_box(j) for i, j in self.boxes.items()}
     
-    def get_object_center(self, target_class):
+    def get_object_center(self, im:Image, target_class):
         """
         Get the center of the detected object.
         
@@ -173,7 +177,9 @@ class ObjectDetector:
             Tuple[int, int, np.ndarray, float]: Center coordinates, bounding box, confidence score
         """
         # Detect object
+        unscaled_boxes = self.detect_objects(image=im) 
         boxes = self.get_real_boxes()
+        self.visualize_detections(im, unscaled_boxes, self.recording_dir)
         if target_class not in boxes:
             return None, None, None, None
         
@@ -207,8 +213,7 @@ class ObjectDetector:
         frame = self.get_frame_at_time(time_seconds)
         
         # Detect object and get center point
-        center_x, center_y, box, confidence = self.get_object_center(target_class
-        )
+        center_x, center_y, box, confidence = self.get_object_center(im=frame, target_class=target_class)
         
         # Get 3D coordinates of center point
         coords, actual_time = get_pixel_3d_coordinates(
@@ -228,27 +233,10 @@ class ObjectDetector:
 
 # Example usage:
 if __name__ == "__main__":
-    from gemini_constant_api_key import GEMINI_API_KEY
-    recording_dir = 'recordings/20250102_213003'
+    recording_dir = 'recordings/20241225_140621'
     
     # Initialize detector
     detector = ObjectDetector(api_key=GEMINI_API_KEY, recording_dir= recording_dir)
-    
-    # Set paths
-    image_path = f'{recording_dir}/detection.jpg'
-    
-    # Detect objects
-    boxes = detector.detect_objects(image_path)
-    print("UNREAL BOXES", boxes)
-    print("Detected boxes:", detector.get_real_boxes())
-    
-    # Visualize results
-    width, height = detector.visualize_detections(
-        image_path=image_path,
-        boxes=boxes,
-        output_dir=recording_dir
-    )
-    print(f"Image dimensions: {width}, {height}")
 
     # Get 3D coordinates
     time_seconds = 1
