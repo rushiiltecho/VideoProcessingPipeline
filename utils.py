@@ -1,5 +1,25 @@
 import json
+import os
 import re
+import shutil
+import tempfile
+
+
+def convert_video(input_path, output_path):
+    # Create a temporary file
+    temp_output_path = tempfile.mktemp(suffix='.mp4')
+    
+    # Run the ffmpeg command to convert the video
+    os.system(f"ffmpeg -i '{input_path}' -c:v libx264 '{temp_output_path}'")
+    
+    # Check if the conversion was successful
+    if os.path.exists(temp_output_path):
+        # Remove the original file
+        os.remove(output_path)
+        # Rename the temporary file to the original output path
+        shutil.move(temp_output_path, output_path)
+    else:
+        print("Conversion failed.")
 
 def parse_to_json(response):
     pattern = r"```json\s*(\{.*\})"

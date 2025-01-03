@@ -6,7 +6,9 @@ from typing import Optional
 from queue import Queue, Empty
 from dataclasses import dataclass
 from datetime import datetime
-
+from realsense_recording import RealSenseRecorder
+from vdeo_analysis_ellm_sudio import VideoAnalyzer
+from rlef_video_annotation import VideoUploader
 @dataclass
 class RecordingMetadata:
     recording_id: str
@@ -23,7 +25,7 @@ class ApplicationState:
         self.processing_queue = Queue()
         self.last_processed_recording_id: Optional[str] = None
 
-class RobustApplication:
+class Application:
     def __init__(self, 
                  realsense_recorder: RealSenseRecorder,
                  video_analyzer: VideoAnalyzer,
@@ -201,7 +203,7 @@ if __name__ == "__main__":
     video_analyzer = VideoAnalyzer()
     rlef_annotations = VideoUploader()
 
-    app = RobustApplication(
+    app = Application(
         realsense_recorder=realsense_recorder,
         video_analyzer=video_analyzer,
         rlef_annotations=rlef_annotations
