@@ -382,6 +382,6 @@ if __name__ == "__main__":
     print(f"================ PAYLOAD ================ +\n{payload['question']}\n================ PAYLOAD ================")
     analyzer = VideoAnalyzer(payload=payload)
     response = analyzer.get_ellm_response()
-    print(response)
+    
     
     # main()

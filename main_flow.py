@@ -32,7 +32,7 @@ class Application:
         latest_video_path = self.realsense_recorder.get_current_savepath()
         recording_id = self.realsense_recorder.get_current_recording_id()
         # self.color_video_filepath = f'{latest_video_path}/color.mp4'
-        self.color_video_filepath = f'{latest_video_path}/color.mp4'
+        self.color_video_filepath = f'C:\\Users\\Rushiil Bhatnagar\\Downloads\\object_detection\\object_detection\\videos\\pick_and_place_1.mp4'
         
         # Step 2: upload the video to GCP and get its URL:
         #TODO: change the name to recording_id from "test1.mp4"
@@ -52,19 +52,19 @@ class Application:
     def run(self,):
         while True:
             if self.is_running:
-                # self.prepare()
+                self.prepare()
                 """ This is the main step to run the application """
                 # Step 1: run the video analysis
                 # TODO: store this in some kind of universal log
     # =====================================================
-                # response_annotations = self.video_analyzer.get_gemini_response(gcp_url=self.gcp_url)
+                response_annotations = self.video_analyzer.get_gemini_response(gcp_url=self.gcp_url)
     # =====================================================
                 # response_annotations = self.video_analyzer.get_ellm_response()
     # =====================================================
 
                 # Step 2: send these results to the annotation tool
-                # status = self.rlef_annotations.upload_to_rlef(url="https://autoai-backend-exjsxe2nda-uc.a.run.app/resource/",filepath= self.color_video_filepath, video_annotations=response_annotations)
-                # print(f"======= status code for RLEF Upload: {status} =======")
+                status = self.rlef_annotations.upload_to_rlef(url="https://autoai-backend-exjsxe2nda-uc.a.run.app/resource/",filepath= self.color_video_filepath, video_annotations=response_annotations)
+                print(f"======= status code for RLEF Upload: {status} =======")
                 self.is_running = False
 
     def camera_loop(self,):

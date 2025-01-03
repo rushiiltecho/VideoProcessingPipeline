@@ -10,6 +10,7 @@ import os
 import torch 
 
 from utils import get_pixel_3d_coordinates, normalize_box, plot_bounding_boxes, transform_coordinates
+from vdeo_analysis_ellm_sudio import VideoAnalyzer
 
 class ObjectDetector:
     """A class to handle object detection using Google's Gemini model."""
@@ -225,6 +226,25 @@ class ObjectDetector:
             "confidence": confidence,
             "box": box.cpu().numpy() if isinstance(box, torch.Tensor) else box
         }
+
+
+def ellm_test():
+    url = "https://dev-egpt.techo.camp/predict"
+    headers = {
+        "Content-Type": "application/json"
+    }
+    #TODO: make the payload customizable.
+    # enable change in video links, agents, etc.
+    payload = None
+    # Load the payload from a JSON file
+    with open("payload.json", "r") as file:
+        payload = json.load(file)
+
+    print(f"================ PAYLOAD ================ +\n{payload['question']}\n================ PAYLOAD ================")
+    analyzer = VideoAnalyzer(payload=payload)
+    response = analyzer.get_ellm_response()
+    # print(response)
+    return response
 
 # Example usage:
 if __name__ == "__main__":

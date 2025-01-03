@@ -7,7 +7,8 @@ __pycache__/
 video_splitter.py
 *example.*
 recordings/
+
 *.log
 *.jpg
 *.pt
-*_constant_*
+*_api_key.py
