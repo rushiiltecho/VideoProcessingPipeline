@@ -237,7 +237,7 @@ def handle_live_feed():
                 display_image = cv2.cvtColor(display_image, cv2.COLOR_BGR2RGB)
                 
                 # Display frame
-                frame_placeholder.image(display_image, channels="RGB", use_column_width=True)
+                frame_placeholder.image(display_image, channels="RGB", use_container_width=True)
                 
                 # If recording, save frames
                 if recorder.is_recording:

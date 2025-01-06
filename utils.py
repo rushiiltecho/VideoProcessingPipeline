@@ -266,10 +266,15 @@ def plot_bounding_boxes(im, noun_phrases_and_positions):
         abs_y1 = int(y1/1000 * height)
         abs_x2 = int(x2/1000 * width)
         abs_y2 = int(y2/1000 * height)
+        center_x, center_y = (abs_x1 + abs_x2) / 2, (abs_y1 + abs_y2) / 2
 
         # Draw the bounding box
         draw.rectangle(
             ((abs_x1, abs_y1), (abs_x2, abs_y2)), outline=color, width=4
+        )
+        draw.ellipse(
+            (center_x - 1, center_y - 1, center_x + 1, center_y + 1),
+            outline=colors[-14], width=5
         )
 
         # Draw the text

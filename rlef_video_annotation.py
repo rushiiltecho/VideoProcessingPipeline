@@ -52,7 +52,7 @@ class VideoUploader:
     def upload_to_rlef(self, url,filepath, video_annotations):
         self.video_annotations = video_annotations
         self.filepath = filepath
-        converted_filepath = self.filepath
+        converted_filepath = f'{self.filepath}_converted.mp4'
         self.convert_video(self.filepath, converted_filepath)
 
         payload = {

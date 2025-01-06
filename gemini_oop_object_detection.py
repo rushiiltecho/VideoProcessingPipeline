@@ -365,7 +365,7 @@ class ObjectDetector:
                     
                     # Convert pixel coordinates to floats for rs2_deproject_pixel_to_point
                     pixel = [float(center_x), float(center_y)]
-                    
+                    print(f"Pixel coordinates: {pixel}")
                     try:
                         coords, _ = get_pixel_3d_coordinates(
                             self.recording_dir,
@@ -379,7 +379,7 @@ class ObjectDetector:
                         _ = time_seconds
                     
                     # Create the key using f-string
-                    key = f"{action}_{object_name}"
+                    key = f"{action.replace(' ','_')}_{object_name}"
                     
                     # Merge dictionaries
                     value = {
@@ -400,7 +400,7 @@ class ObjectDetector:
             ret_response.update(result)
         
         return ret_response
-    
+
 
 def ellm_studio_test(recording_dir:str):
     payload = None
