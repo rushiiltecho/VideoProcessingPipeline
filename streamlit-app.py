@@ -442,7 +442,7 @@ def __advanced_handle_uploaded_file():
             
             # Process recording button
             if st.button("Process Recording"):
-                process_recording_directory(
+                __process_recording_directory(
                     color_path=expected_files['color.mp4'],
                     depth_path=expected_files['depth_visualization.mp4'],
                     metadata_path=expected_files['metadata.json'],
@@ -452,7 +452,7 @@ def __advanced_handle_uploaded_file():
         except Exception as e:
             st.error(f"Error processing recording directory: {str(e)}")
 
-def process_recording_directory(color_path, depth_path, metadata_path, frames_path):
+def __process_recording_directory(color_path, depth_path, metadata_path, frames_path):
     """Process all components of the recording directory."""
     progress_bar = st.progress(0)
     
@@ -476,12 +476,12 @@ def process_recording_directory(color_path, depth_path, metadata_path, frames_pa
         progress_bar.progress(35)
 
         # Step 3: Upload depth video to GCP
-        st.write("Uploading depth video to GCP...")
-        depth_gcp_url = analyzer.upload_video_to_bucket(
-            f"depth_{timestamp}.mp4",
-            depth_path
-        )
-        progress_bar.progress(50)
+        # st.write("Uploading depth video to GCP...")
+        # depth_gcp_url = analyzer.upload_video_to_bucket(
+        #     f"depth_{timestamp}.mp4",
+        #     depth_path
+        # )
+        # progress_bar.progress(50)
 
         # Step 4: Process frames data
         st.write("Processing frames data...")
@@ -510,7 +510,7 @@ def process_recording_directory(color_path, depth_path, metadata_path, frames_pa
         combined_metadata = {
             **metadata,
             "color_video_url": color_gcp_url,
-            "depth_video_url": depth_gcp_url
+            # "depth_video_url": depth_gcp_url
         }
         
         status = rlef_uploader.upload_to_rlef(
