@@ -1,52 +1,43 @@
-from rlef_video_annotation import VideoUploader
-from vdeo_analysis_ellm_sudio import VideoAnalyzer
-import pyrealsense2 as rs
-import cv2
-import numpy as np
-import h5py
-import json
 from datetime import datetime
+import json
 import os
+import time
+import zipfile
+import cv2
+import h5py
+import numpy as np
+from hi_robotics.vision_ai.cameras.intel_realsense_camera import IntelRealSenseCamera
+
+
 
 class RealSenseRecorder:
-    def __init__(self, output_dir="recordings"):
-        self.output_dir = output_dir
-        os.makedirs(output_dir, exist_ok=True)
+    def __init__(self, camera: IntelRealSenseCamera, output_dir:str= "recordings" ,fps= 10):
+        self.camera = camera
+        self.rgb_video = None
+        self.depth_video = None
+
+        # Camera Intrinsics Parameters:
+        self.intrinsics = camera.get_intrinsics(depth=True)
+        self.depth_intrinsics = self.intrinsics['depth_intrinsics']
+        self.color_intrinsics = self.intrinsics['color_intrinsics']
+        self.width = self.depth_intrinsics.width
+        self.height = self.depth_intrinsics.height
+        self.fps = fps if fps else 10
+        self.depth_scale =  0.001
         
-        # Initialize RealSense pipeline
-        self.pipeline = rs.pipeline()
-        self.config = rs.config()
-        
-        # Configure streams
-        self.width = 640
-        self.height = 480
-        self.fps = 30
-        self.config.enable_stream(rs.stream.color, self.width, self.height, rs.format.bgr8, self.fps)
-        self.config.enable_stream(rs.stream.depth, self.width, self.height, rs.format.z16, self.fps)
-        
-        # Start pipeline
-        self.profile = self.pipeline.start(self.config)
-        self.align = rs.align(rs.stream.color)
-        
-        # Get depth scale
-        self.depth_sensor = self.profile.get_device().first_depth_sensor()
-        self.depth_scale = self.depth_sensor.get_depth_scale()
-        
-        # Get camera intrinsics
-        self.color_profile = self.profile.get_stream(rs.stream.color)
-        self.depth_profile = self.profile.get_stream(rs.stream.depth)
-        self.color_intrinsics = self.color_profile.as_video_stream_profile().get_intrinsics()
-        self.depth_intrinsics = self.depth_profile.as_video_stream_profile().get_intrinsics()
-        
-        # Recording state
+        # Recording Status Management
         self.recording_id = None
+        self.h5_file = None
+        self.color_video_writer = None
+        self.depth_video_writer = None
+        
+        self.current_savepath = None
         self.frame_count = 0
         self.is_recording = False
-        self.h5_file = None
-        self.video_writer = None
-        self.current_savepath = None
-        self.depth_video_writer = None  # For visualization of depth data
         self.recording_stopped_callback = None
+
+        # Recording Save Management
+        self.output_dir = output_dir
 
     def set_recording_stopped_callback(self, callback):
         """
@@ -73,11 +64,13 @@ class RealSenseRecorder:
                 "model": str(self.depth_intrinsics.model),
                 "coeffs": self.depth_intrinsics.coeffs
             },
-            "depth_scale": self.depth_scale
+            "depth_scale": self.depth_scale if self.depth_scale else 0.001
         }
-
-    def start_recording(self, recording_id= None):
-        """Start a new recording session"""
+    
+    def start_recording(self, recording_id:str = None):
+        """
+        Start recording the camera feed to a video file.
+        """
         if self.is_recording:
             return
             
@@ -88,6 +81,7 @@ class RealSenseRecorder:
         recording_dir = os.path.join(self.output_dir, self.recording_id)
         os.makedirs(recording_dir, exist_ok=True)
         self.current_savepath = recording_dir
+        self.data_collection_directory_creation()
         # Initialize HDF5 file
         h5_path = os.path.join(recording_dir, "frames.h5")
         self.h5_file = h5py.File(h5_path, 'w')
@@ -130,11 +124,11 @@ class RealSenseRecorder:
         # Initialize video writers
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         self.video_writer = cv2.VideoWriter(
-            os.path.join(recording_dir, "color.mp4"),
+            os.path.join(self.current_savepath, "color.mp4"),
             fourcc, self.fps, (self.width, self.height)
         )
         self.depth_video_writer = cv2.VideoWriter(
-            os.path.join(recording_dir, "depth_visualization.mp4"),
+            os.path.join(self.current_savepath, "depth_visualization.mp4"),
             fourcc, self.fps, (self.width, self.height)
         )
         
@@ -146,11 +140,11 @@ class RealSenseRecorder:
             "resolution": {"width": self.width, "height": self.height},
             "camera_intrinsics": intrinsics
         }
-        with open(os.path.join(recording_dir, "metadata.json"), 'w') as f:
+        with open(os.path.join(self.current_savepath, "metadata.json"), 'w') as f:
             json.dump(metadata, f, indent=4)
         
         self.is_recording = True
-        print(f"Recording started. Directory: {recording_dir}")
+        print(f"Recording started. Directory: {self.current_savepath}")
 
     def stop_recording(self):
         """Stop the current recording session"""
@@ -169,7 +163,7 @@ class RealSenseRecorder:
         if self.depth_video_writer is not None:
             self.depth_video_writer.release()
             self.depth_video_writer = None
-            
+
         # Update metadata
         if self.recording_id:
             metadata_path = os.path.join(self.output_dir, self.recording_id, "metadata.json")
@@ -184,9 +178,10 @@ class RealSenseRecorder:
                     json.dump(metadata, f, indent=4)
             
         self.is_recording = False
+        self.save_zips()
         print(f"Recording stopped. Frames captured: {self.frame_count}")
 
-        # <--- Here is the important addition:
+        # [IGNORE]<--- Here is the addition:
         if self.recording_stopped_callback is not None:
             self.recording_stopped_callback()
 
@@ -197,7 +192,7 @@ class RealSenseRecorder:
         colored_depth = cv2.applyColorMap(normalized_depth, cv2.COLORMAP_JET)
         return colored_depth
 
-    def _append_frames(self, color_frame, depth_frame, frames):
+    def _append_frames(self, color_frame, depth_frame):
         """Append color and depth frames to HDF5 and video files"""
         # Convert frames to numpy arrays
         color_image = np.asanyarray(color_frame.get_data())
@@ -211,7 +206,7 @@ class RealSenseRecorder:
         self.h5_file["color_frames"][self.frame_count] = color_image
         self.h5_file["depth_frames"][self.frame_count] = depth_image
         self.h5_file["timestamps"][self.frame_count] = [
-            frames.get_timestamp(),
+            color_frame.get_timestamp(),
             color_frame.get_timestamp(),
             depth_frame.get_timestamp()
         ]
@@ -221,42 +216,46 @@ class RealSenseRecorder:
         
         # Create and save depth visualization
         depth_colormap = self._normalize_depth_for_display(depth_image)
-        self.depth_video_writer.write(depth_colormap)
-        
+        self.depth_video_writer.write(depth_colormap)  
+
         # Flush HDF5 periodically
         if self.frame_count % 30 == 0:
             self.h5_file.flush()
 
-    def capture_frames(self):
-        """Main loop for capturing frames"""
+    def capture_frames(self,):
+        """Capture frames from the camera and save them to the recording"""
         try:
             while True:
-                # Wait for frameset
-                frames = self.pipeline.wait_for_frames()
-                aligned_frames = self.align.process(frames)
-                
-                color_frame = aligned_frames.get_color_frame()
-                depth_frame = aligned_frames.get_depth_frame()
-                
-                if not color_frame or not depth_frame:
-                    continue
-                
-                # Convert to numpy array for display
-                color_image = np.asanyarray(color_frame.get_data())
+                rgb_frame, depth_frame = self.camera.get_frames()
+                color_image = np.asanyarray(rgb_frame.get_data())
                 depth_image = np.asanyarray(depth_frame.get_data())
-                
-                # Create displays
+
                 depth_colormap = self._normalize_depth_for_display(depth_image)
                 display_image = np.hstack((color_image, depth_colormap))
-                
-                # Show frames
-                cv2.imshow('Color and Depth Frames', display_image)
-                
-                # If recording, save frames
+                save_frame_count_diff = self.frame_count
+
+                cv2.imshow("RGB-D Frame", display_image)
+
                 if self.is_recording:
-                    self._append_frames(color_frame, depth_frame, aligned_frames)
+                    prev_time = time.time()
+
+                    self._append_frames(rgb_frame, depth_frame)
                     self.frame_count += 1
-                
+                    
+                    current_time = time.time()
+                    if current_time - prev_time < 1.0 / self.fps:
+                        # Save RGB image:
+                        rgb_path = f"{self.current_savepath}/rgb_images_data_collection/image_{self.frame_count}.jpg"
+                        cv2.imwrite(rgb_path, color_image)
+
+                        # Save depth image as .npy:
+                        depth_path = f"{self.current_savepath}/depth_images_data_collection/image_{self.frame_count}.npy"
+                        np.save(depth_path, depth_image)
+
+                        # Increment image counter and update last capture time
+                        print(f"Saved : {self.frame_count}")
+                        prev_time = current_time
+
                 # Handle keyboard input
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('r'):
@@ -269,33 +268,85 @@ class RealSenseRecorder:
                 
         finally:
             self.stop_recording()
-            self.pipeline.stop()
+            self.camera.release_camera()
             cv2.destroyAllWindows()
+
+    def save_zips(self,):
+        # Create timestamp for unique zip names
+        # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Create zip archives
+        rgb_zip_name = f"{self.current_savepath}/archives/rgb_images_data_collection.zip"
+        depth_zip_name = f"{self.current_savepath}/archives/depth_images_data_collection.zip"
+
+        
+        print("Creating zip archives...")
+        self.create_zip_archive(f'{self.current_savepath}/archives', rgb_zip_name)
+        self.create_zip_archive(f'{self.current_savepath}/archives', depth_zip_name)
+        
+        print("Archives created successfully!")
 
     def get_current_savepath(self,):
         return self.current_savepath
-
-    def get_current_recording_id(self,):
+    
+    def get_current_recording(self,):
         return self.recording_id
+    
+    def create_zip_archive(self, source_dir, zip_name):
+        """Create a zip file from a directory"""
+        with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, _, files in os.walk(source_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, source_dir)
+                    zipf.write(file_path, arcname)
+        print(f"Created zip archive: {zip_name}")
+    
+    def data_collection_directory_creation(self,):
+        """Collect data from the camera and save it to a zip archive"""
+        # Create directories if they don't exist
+        os.makedirs(f'{self.current_savepath}/rgb_images_data_collection', exist_ok=True)
+        os.makedirs(f'{self.current_savepath}/depth_images_data_collection', exist_ok=True)
+        os.makedirs(f'{self.current_savepath}/videos_data_collection', exist_ok=True)
+        os.makedirs(f'{self.current_savepath}/archives', exist_ok=True)
 
-    def get_ellm_studio_analysis(self, analyzer: VideoAnalyzer, rlef_uploader:VideoUploader, payload_filepath="payload.json"):
-        payload = None
-        try:
-            #TODO: this is not the right way to do it, correct the videoanalyzer and the VideoUploader stuff in main.
-            color_video_filepath = f'{self.current_savepath}/color.mp4'
-            gcp_url = analyzer.upload_video_to_bucket("test1.mp4", color_video_filepath)
-            video_annotations = analyzer.get_ellm_response()
-            status_code = rlef_uploader.upload_to_rlef()
-            print(f'status_code for RLEF Upload: {status_code}')
-        except Exception as e:
-            pass
+        
 
-    def send_annotations_to_rlef(self,):
-        pass
+def sample_function():
+    camera= IntelRealSenseCamera()
 
-    def prepare_annotations(self,):
-        pass
+    try:
+        print(camera.get_intrinsics(depth=True)['depth_intrinsics'])
+        print(camera.get_intrinsics(depth=True)['depth_intrinsics'].width)
+        while True:
+            # Capture frames from the camera
+            rgb_frame, depth_frame = camera.get_frames()
+            color_image = np.asanyarray(rgb_frame.get_data())
+            depth_image = np.asanyarray(depth_frame.get_data())
 
-if __name__ == "__main__":
-    recorder = RealSenseRecorder()
-    recorder.capture_frames() 
+            depth_image_normalized = cv2.normalize(depth_image, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+            depth_image_colored = cv2.cvtColor(depth_image_normalized, cv2.COLOR_GRAY2BGR)
+            display_image = np.hstack((color_image, depth_image_colored))
+
+            cv2.imshow("RGB Image", display_image)
+
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
+                break
+    
+    
+    finally:
+        camera.release_camera()
+        cv2.destroyAllWindows()
+        print('Camera released and windows destroyed')
+
+
+if __name__ == "__main__": 
+    camera = IntelRealSenseCamera()
+    recorder = RealSenseRecorder(camera)
+    recorder.capture_frames()
+    print(recorder.get_current_savepath())
+    print(recorder.get_current_recording())
+    # camera.release_camera()
+    # cv2.destroyAllWindows()
+    # print('Camera released and windows destroyed')
