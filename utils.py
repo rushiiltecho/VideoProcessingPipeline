@@ -9,6 +9,20 @@ import numpy as np
 import pyrealsense2 as rs
 import vertexai
 from google.cloud import storage
+import yaml
+
+def load_config(config_path="config/config.yaml"):
+    """
+    Loads the configuration file (YAML format).
+
+    Args:
+        config_path (str): Path to the configuration YAML file. Defaults to "config.yaml".
+
+    Returns:
+        dict: A dictionary containing the configuration settings from the YAML file.
+    """
+    with open(config_path, 'r') as file:
+        return yaml.safe_load(file)
 
 
 # vertexai.init(project=, location=, credentials=)
@@ -47,6 +61,54 @@ def convert_video(input_path, output_path):
     else:
         print("Conversion failed.")
 
+
+def deproject_pixel_to_point(depth_array, pixel_coords, intrinsics):
+    """Deproject pixel coordinates and depth to 3D point using RealSense intrinsics."""
+    x, y = int(pixel_coords[0]), int(pixel_coords[1])
+    if x < 0 or x >= depth_array.shape[1] or y < 0 or y >= depth_array.shape[0]:
+        return np.array([0, 0, 0])
+    depth, valid_x, valid_y = get_valid_depth(depth_array, x, y)
+    if depth == 0:
+        print(f"Warning: No valid depth found near pixel ({x}, {y})")
+        return np.array([0, 0, 0])
+    point_3d = rs.rs2_deproject_pixel_to_point(intrinsics, [valid_x, valid_y], depth)
+    return np.array(point_3d)
+
+def get_pixel_3d_coordinates_color_frame(frame, pixel_x, pixel_y):
+    """
+    
+    """
+    color_intrinsics , depth_intrinsics = get_intrinsics()
+
+
+
+def get_intrinsics(metadata_filepath: str):
+    config = load_config()
+    camera_intrinsics = config['camera_intrinsics']
+    color_intrinsics = camera_intrinsics['color_intrinsics']
+    depth_intrinsics = camera_intrinsics['depth_intrinsics']
+    return color_intrinsics, depth_intrinsics
+
+
+def get_valid_depth(depth_array, x, y):
+    """Find the first non-zero depth value within a 10-pixel radius around the given point."""
+    height, width = depth_array.shape
+    if depth_array[y, x] > 0:
+        return depth_array[y, x], x, y
+
+    max_radius = 10
+    for radius in range(1, max_radius + 1):
+        for dx in range(-radius, radius + 1):
+            for dy in range(-radius, radius + 1):
+                new_x = x + dx
+                new_y = y + dy
+                if 0 <= new_x < width and 0 <= new_y < height:
+                    depth = depth_array[new_y, new_x]
+                    if depth > 0:
+                        return depth, new_x, new_y
+
+    return 0, x, y
+
 def get_pixel_3d_coordinates(recording_dir, time_seconds, pixel_x, pixel_y):
     """
     Get the 3D coordinates (X, Y, Z) of a specific pixel at a specific time in the video
@@ -78,27 +140,27 @@ def get_pixel_3d_coordinates(recording_dir, time_seconds, pixel_x, pixel_y):
             intrinsics_dict = json.loads(intrinsics_str)
             depth_scale = intrinsics_dict['depth_scale']
             
-            depth_intrinsics = rs.intrinsics()
-            d_intr = intrinsics_dict['depth_intrinsics']
-            depth_intrinsics.width = h5_file.attrs['width']
-            depth_intrinsics.height = h5_file.attrs['height']
-            depth_intrinsics.ppx = d_intr['ppx']
-            depth_intrinsics.ppy = d_intr['ppy']
-            depth_intrinsics.fx = d_intr['fx']
-            depth_intrinsics.fy = d_intr['fy']
-            depth_intrinsics.model = rs.distortion.brown_conrady
-            depth_intrinsics.coeffs = d_intr['coeffs']
+            color_intrinsics = rs.intrinsics()
+            d_intr = intrinsics_dict['color_intrinsics']
+            color_intrinsics.width = h5_file.attrs['width']
+            color_intrinsics.height = h5_file.attrs['height']
+            color_intrinsics.ppx = d_intr['ppx']
+            color_intrinsics.ppy = d_intr['ppy']
+            color_intrinsics.fx = d_intr['fx']
+            color_intrinsics.fy = d_intr['fy']
+            color_intrinsics.model = rs.distortion.inverse_brown_conrady
+            color_intrinsics.coeffs = d_intr['coeffs']
             
             # Ensure pixel coordinates are within bounds
-            pixel_x = min(max(0, float(pixel_x)), depth_intrinsics.width - 1)
-            pixel_y = min(max(0, float(pixel_y)), depth_intrinsics.height - 1)
+            pixel_x = min(max(0, float(pixel_x)), color_intrinsics.width - 1)
+            pixel_y = min(max(0, float(pixel_y)), color_intrinsics.height - 1)
             
             # Get depth value and convert to meters
             depth_value = float(depth_frame[int(pixel_y), int(pixel_x)]) * depth_scale
             
             # Deproject pixel to 3D point
             point_3d = rs.rs2_deproject_pixel_to_point(
-                depth_intrinsics,
+                color_intrinsics,
                 [float(pixel_x), float(pixel_y)],
                 depth_value
             )
