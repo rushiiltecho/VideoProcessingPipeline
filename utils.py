@@ -10,8 +10,55 @@ import pyrealsense2 as rs
 import vertexai
 from google.cloud import storage
 
+import yaml
+import requests
 
-# vertexai.init(project=, location=, credentials=)
+
+def process_images(rgb_zip_path, depth_zip_path, url_endpoint= "http://34.28.22.203:5000/process_pose", output_dir = "hamer_output"):
+   url = url_endpoint if url_endpoint else "http://34.28.22.203:5000/process_pose"
+   
+   files = {
+       'rgb_data': ('rgb.zip', open(rgb_zip_path, 'rb')),
+       'depth_data': ('depth.zip', open(depth_zip_path, 'rb'))
+   }
+   
+   try:
+       response = requests.post(url, files=files)
+       response.raise_for_status()
+       
+       # Save CSV response
+       with open(f'{output_dir}/predictions.csv', 'wb') as f:
+           f.write(response.content)
+       
+       print("CSV saved as predictions.csv")
+       
+   except requests.exceptions.RequestException as e:
+       print(f"Error: {str(e)}")
+   finally:
+       for _, f in files.values():
+           f.close()
+
+# Example usage
+# rgb_zip = "path/to/rgb.zip"
+# depth_zip = "path/to/depth.zip" 
+# process_images(rgb_zip, depth_zip)
+
+
+def load_config(config_path="config/config.yaml"):
+    """
+    Loads the configuration file (YAML format).
+
+    Args:
+        config_path (str): Path to the configuration YAML file. Defaults to "config.yaml".
+
+    Returns:
+        dict: A dictionary containing the configuration settings from the YAML file.
+    """
+    with open(config_path, 'r') as file:
+        return yaml.safe_load(file)
+
+
+
 
 calib_matrix_x = np.array([
       [ 0.068, -0.986,  0.152, -0.108],
@@ -27,9 +74,6 @@ calib_matrix_y = np.array([
       [ 0.0,    0.0,     0.0,    1.0    ]
     ])
 
-# model = genai.GenerativeModel(
-#   model_name='gemini-1.5-flash-002',
-# )
 
 def convert_video(input_path, output_path):
     # Create a temporary file
@@ -48,6 +92,46 @@ def convert_video(input_path, output_path):
         print("Conversion failed.")
 
 
+def deproject_pixel_to_point(depth_array, pixel_coords, intrinsics):
+    """Deproject pixel coordinates and depth to 3D point using RealSense intrinsics."""
+    x, y = int(pixel_coords[0]), int(pixel_coords[1])
+    if x < 0 or x >= depth_array.shape[1] or y < 0 or y >= depth_array.shape[0]:
+        return np.array([0, 0, 0])
+    depth, valid_x, valid_y = get_valid_depth(depth_array, x, y)
+    if depth == 0:
+        print(f"Warning: No valid depth found near pixel ({x}, {y})")
+        return np.array([0, 0, 0])
+    point_3d = rs.rs2_deproject_pixel_to_point(intrinsics, [valid_x, valid_y], depth)
+    return np.array(point_3d)
+
+
+def get_intrinsics(metadata_filepath: str):
+    config = load_config()
+    camera_intrinsics = config['camera_intrinsics']
+    color_intrinsics = camera_intrinsics['color_intrinsics']
+    depth_intrinsics = camera_intrinsics['depth_intrinsics']
+    return color_intrinsics, depth_intrinsics
+
+
+def get_valid_depth(depth_array, x, y):
+    """Find the first non-zero depth value within a 10-pixel radius around the given point."""
+    height, width = depth_array.shape
+    if depth_array[y, x] > 0:
+        return depth_array[y, x], x, y
+
+    max_radius = 10
+    for radius in range(1, max_radius + 1):
+        for dx in range(-radius, radius + 1):
+            for dy in range(-radius, radius + 1):
+                new_x = x + dx
+                new_y = y + dy
+                if 0 <= new_x < width and 0 <= new_y < height:
+                    depth = depth_array[new_y, new_x]
+                    if depth > 0:
+                        return depth, new_x, new_y
+
+    return 0, x, y
+
 def get_pixel_3d_coordinates(recording_dir, time_seconds, pixel_x, pixel_y):
     """
     Get the 3D coordinates (X, Y, Z) of a specific pixel at a specific time in the video
@@ -55,62 +139,60 @@ def get_pixel_3d_coordinates(recording_dir, time_seconds, pixel_x, pixel_y):
     Args:
         recording_dir (str): Path to the recording directory
         time_seconds (float): Time in seconds from the start of the video
-        pixel_x (int): X coordinate of the pixel
-        pixel_y (int): Y coordinate of the pixel
+        pixel_x (Optional[float]): X coordinate of the pixel
+        pixel_y (Optional[float]): Y coordinate of the pixel
     
     Returns:
         tuple: ((X, Y, Z) coordinates in meters, actual_time in seconds)
+               Returns (None, actual_time) if pixel coordinates are None
     """
-    # Open the H5F file
-    h5_path = f"{recording_dir}/frames.h5"
-    with h5py.File(h5_path, 'r') as h5_file:
-        # Get timestamps array
-        timestamps = h5_file['timestamps'][:]
-        
-        # Convert timestamps to seconds from start
-        frame_times = timestamps[:, 0] - timestamps[0, 0]
-        
-        # Find the closest frame to the requested time
-        closest_frame = np.argmin(np.abs(frame_times - time_seconds))
-        
-        # Get the depth frame
-        depth_frame = h5_file['depth_frames'][closest_frame]
-        
-        # Get actual timestamp of the frame we're using
-        actual_time = frame_times[closest_frame]
-        print(f"Using frame at {actual_time:.3f} seconds (requested: {time_seconds:.3f} seconds)")
-        
-        # Get camera intrinsics from metadata
-        intrinsics_str = h5_file.attrs['camera_intrinsics']
-        intrinsics_dict = json.loads(intrinsics_str)
-        depth_scale = intrinsics_dict['depth_scale']
-        
-        # Create RealSense intrinsics object
-        depth_intrinsics = rs.intrinsics()
-        d_intr = intrinsics_dict['depth_intrinsics']
-        depth_intrinsics.width = h5_file.attrs['width']
-        depth_intrinsics.height = h5_file.attrs['height']
-        depth_intrinsics.ppx = d_intr['ppx']
-        depth_intrinsics.ppy = d_intr['ppy']
-        depth_intrinsics.fx = d_intr['fx']
-        depth_intrinsics.fy = d_intr['fy']
-        depth_intrinsics.model = rs.distortion.brown_conrady
-        depth_intrinsics.coeffs = d_intr['coeffs']
-        
-        # Get depth value for the pixel (in millimeters)
-        depth_value = depth_frame[pixel_y, pixel_x]
-        
-        # Convert depth to meters
-        depth_in_meters = depth_value * depth_scale
-        
-        # Deproject pixel to 3D point
-        point_3d = rs.rs2_deproject_pixel_to_point(
-            depth_intrinsics,
-            [pixel_x, pixel_y],
-            depth_in_meters
-        )
-        return point_3d, actual_time
-
+    try:
+        # Early return if pixel coordinates are None
+        if pixel_x is None or pixel_y is None:
+            print("Warning: Received None for pixel coordinates")
+            return None, time_seconds
+            
+        with h5py.File(f"{recording_dir}/frames.h5", 'r') as h5_file:
+            timestamps = h5_file['timestamps'][:]
+            frame_times = timestamps[:, 0] - timestamps[0, 0]
+            closest_frame = np.argmin(np.abs(frame_times - time_seconds))
+            depth_frame = h5_file['depth_frames'][closest_frame]
+            actual_time = frame_times[closest_frame]
+            
+            intrinsics_str = h5_file.attrs['camera_intrinsics']
+            intrinsics_dict = json.loads(intrinsics_str)
+            depth_scale = intrinsics_dict['depth_scale']
+            
+            color_intrinsics = rs.intrinsics()
+            d_intr = intrinsics_dict['color_intrinsics']
+            color_intrinsics.width = h5_file.attrs['width']
+            color_intrinsics.height = h5_file.attrs['height']
+            color_intrinsics.ppx = d_intr['ppx']
+            color_intrinsics.ppy = d_intr['ppy']
+            color_intrinsics.fx = d_intr['fx']
+            color_intrinsics.fy = d_intr['fy']
+            color_intrinsics.model = rs.distortion.inverse_brown_conrady
+            color_intrinsics.coeffs = d_intr['coeffs']
+            
+            # Ensure pixel coordinates are within bounds
+            pixel_x = min(max(0, float(pixel_x)), color_intrinsics.width - 1)
+            pixel_y = min(max(0, float(pixel_y)), color_intrinsics.height - 1)
+            
+            # Get depth value and convert to meters
+            depth_value = float(depth_frame[int(pixel_y), int(pixel_x)]) * depth_scale
+            
+            # Deproject pixel to 3D point
+            point_3d = rs.rs2_deproject_pixel_to_point(
+                color_intrinsics,
+                [float(pixel_x), float(pixel_y)],
+                depth_value
+            )
+            
+            return point_3d, actual_time
+            
+    except Exception as e:
+        print(f"Error in get_pixel_3d_coordinates: {e}")
+        return None, time_seconds
 
 def _transform_coordinates(point_xyz, calib_matrix_x=calib_matrix_x, calib_matrix_y=calib_matrix_y):
     """
@@ -162,7 +244,7 @@ def transform_coordinates(point):
     B[:3, 3] = point
     A = calib_matrix_y @ B @ np.linalg.inv(calib_matrix_x)
     transformed_point = A[:3, 3] * 1000
-    return transformed_point[::-1]/1000
+    return transformed_point/1000
 
 def parse_list_boxes(text:str):
   result = []
@@ -268,11 +350,17 @@ def plot_bounding_boxes(im, noun_phrases_and_positions):
         abs_y1 = int(y1/1000 * height)
         abs_x2 = int(x2/1000 * width)
         abs_y2 = int(y2/1000 * height)
+        center_x, center_y = (abs_x1 + abs_x2) / 2, (abs_y1 + abs_y2) / 2
 
         # Draw the bounding box
         draw.rectangle(
             ((abs_x1, abs_y1), (abs_x2, abs_y2)), outline=color, width=4
         )
+        draw.ellipse(
+            (center_x - 1, center_y - 1, center_x + 1, center_y + 1),
+            outline=colors[-14], width=5
+        )
+
 
         # Draw the text
         draw.text((abs_x1 + 8, abs_y1 + 6), noun_phrase, fill=color)
@@ -299,6 +387,17 @@ def normalize_box(box, width=640, height=480):
     return normalized_box
 
 # REGION SELECTOR UTILS ============================================================
+
+def convert_time_to_seconds(time):
+    time_parts = time.split(':')
+    if len(time_parts) == 3:
+        h, m, s = map(int, time_parts)
+        return h * 3600 + m * 60 + s
+    elif len(time_parts) == 2:
+        m, s = map(int, time_parts)
+        return m * 60 + s
+    else:
+        raise ValueError("Invalid time format")
 
 
 if __name__ == "__main__":

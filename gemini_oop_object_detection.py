@@ -1,17 +1,18 @@
+import google.generativeai as genai
 import json
 from pathlib import Path
 import cv2
 import json_repair
 import numpy as np
 from PIL import Image
-import google.generativeai as genai
+from gemini_constant_api_key import GEMINI_API_KEY
 from typing import Dict, List, Tuple, Optional
 import os
 import torch 
 
-from gemini_api_key_example import GEMINI_API_KEY
+from utils import convert_time_to_seconds, get_pixel_3d_coordinates, normalize_box, plot_bounding_boxes, transform_coordinates
 from vdeo_analysis_ellm_sudio import VideoAnalyzer
-from utils import get_pixel_3d_coordinates, normalize_box, plot_bounding_boxes, transform_coordinates
+
 
 class ObjectDetector:
     """A class to handle object detection using Google's Gemini model."""
@@ -28,10 +29,10 @@ class ObjectDetector:
         self.configure_gemini(api_key)
         self.model = genai.GenerativeModel(model_name=model_name)
         self.default_prompt = (
-            "Return bounding boxes for a soda can in the"
-            " following format as a list. \n ```json{'soda_can_<color>' : [xmin, ymin, xmax, ymax]"
+            "Return bounding boxes for object in the"
+            " following format as a list. \n ```json{'<object_name>' : [xmin, ymin, xmax, ymax]"
             " ...}``` \n If there are more than one instance of an object, add"
-            " them to the dictionary as 'soda_can_<color_1>', 'soda_can_<color_2>', etc."
+            " them to the dictionary as '<object_name>', '<object_name>', etc."
         )
         self.recording_dir = Path(recording_dir)
         self.video_path = self.recording_dir / "color.mp4"
@@ -96,8 +97,8 @@ class ObjectDetector:
     def configure_gemini(api_key: str) -> None:
         """Configure Gemini with the provided API key."""
         genai.configure(api_key=api_key)
-    
-    def detect_objects(self, image_path: Optional[str]= None, image: Optional[Image.Image] = None) -> List[Dict]:
+
+    def detect_objects_1(self, image_path: Optional[str]= None, image: Optional[Image.Image] = None,) -> List[Dict]:
         """
         Detect objects in the given image using Gemini model.
         
@@ -110,7 +111,39 @@ class ObjectDetector:
         """
         try:
             im = image if image else Image.open(image_path)
-            prompt_text = self.default_prompt
+            prompt_text = (
+            "Return bounding boxes for object in the"
+            " following format as a list. \n ```json{'<object_name>' : [xmin, ymin, xmax, ymax]"
+            " ...}``` \n If there are more than one instance of an object, add"
+            " them to the dictionary as '<object_name>', '<object_name>', etc."
+        )
+
+            response = self.model.generate_content([im, prompt_text])
+            print(response.text)
+            boxes = json.loads(json_repair.repair_json(self._parse_to_json(response.text)))
+            self.boxes= boxes
+            return boxes
+        except Exception as e:
+
+    def detect_objects(self, image_path: Optional[str]= None, image: Optional[Image.Image] = None, target_class: str= None) -> List[Dict]:
+        """
+        Detect objects in the given image using Gemini model.
+        
+        Args:
+            image_path (str): Path to the image file
+            prompt (str, optional): Custom prompt for the model
+            
+        Returns:
+            Dict: Dictionary containing detected objects and their bounding boxes
+        """
+        try:
+            im = image if image else Image.open(image_path)
+            prompt_text = (
+            "Return bounding boxes for object in the"
+            f" following format as a list. \n ```json{'{'}'{target_class}' : [xmin, ymin, xmax, ymax]"
+            " ...}``` \n If there are more than one instance of an object, add"
+            " them to the dictionary as '{target_class}', '<object_name>', etc."
+        )
             
             response = self.model.generate_content([im, prompt_text])
             print(response.text)
@@ -118,8 +151,9 @@ class ObjectDetector:
             self.boxes= boxes
             return boxes
         except Exception as e:
-            print(f"EXCEPTION during detect_objects: {e}")
-    
+            print(f"EXCEPTION during detect_objects: {e}")    
+
+
     def visualize_detections(self, 
                            image: Image.Image, 
                            boxes: Dict, 
@@ -171,17 +205,24 @@ class ObjectDetector:
         Get the center of the detected object.
         
         Args:
-
+            im: PIL Image
             target_class (str): Object class to detect
-            
+                
         Returns:
-            Tuple[int, int, np.ndarray, float]: Center coordinates, bounding box, confidence score
+            Tuple[Optional[int], Optional[int], Optional[np.ndarray], Optional[float]]: 
+                Center coordinates, bounding box, confidence score. All None if detection fails.
         """
         # Detect object
-        unscaled_boxes = self.detect_objects(image=im) 
+        unscaled_boxes = self.detect_objects(image=im, target_class=target_class) 
+        if not unscaled_boxes:  # If detection fails
+            print(f"No objects detected for class {target_class}")
+            return None, None, None, None
+            
         boxes = self.get_real_boxes()
         self.visualize_detections(im, unscaled_boxes, self.recording_dir)
+
         if target_class not in boxes:
+            print(f"Target class {target_class} not found in detected boxes")
             return None, None, None, None
         
         # Get bounding box and confidence score
@@ -193,7 +234,7 @@ class ObjectDetector:
         center_y = int((box[1] + box[3]) / 2)
         
         return center_x, center_y, box, confidence
-    
+
     def get_object_3d_coordinates(self, time_seconds, target_class):
         """
         Get 3D coordinates of object center at specific time
@@ -231,6 +272,95 @@ class ObjectDetector:
             "confidence": confidence,
             "box": box.cpu().numpy() if isinstance(box, torch.Tensor) else box
         }
+    
+
+    def get_real_world_coordinates(self, response: Dict):
+        classes_to_detect = response['objects']
+        actions = list(response.keys())[2:]
+        ret_response = {}
+        
+        # Get 3D coordinates of everything and store in a dictionary
+        for action in actions:
+            result = {}
+            center_x, center_y, box, confidence = None, None, None, None
+
+            for i in range(len(response[action])):
+                try:
+                    object_name = response[action][i]['object_name']
+                    start_time = response[action][i]['start_time']
+                    end_time = response[action][i]['end_time']
+                    time_seconds = convert_time_to_seconds(end_time if 'plac' in action else start_time)
+                    
+                    # Get frame and detect object
+                    frame = self.get_frame_at_time(time_seconds)
+                    center_x, center_y, box, confidence = self.get_object_center(im=frame, target_class=object_name)
+                    
+                    if center_x is None or center_y is None:
+                        print(f"Warning: Could not detect {object_name} at time {start_time}")
+                        continue
+                    
+                    # Convert pixel coordinates to floats for rs2_deproject_pixel_to_point
+                    pixel = [float(center_x), float(center_y)]
+                    print(f"Pixel coordinates: {pixel}")
+                    try:
+                        coords, _ = get_pixel_3d_coordinates(
+                            self.recording_dir,
+                            time_seconds,
+                            pixel[0],
+                            pixel[1]
+                        )
+                    except Exception as e:
+                        print(f"Error getting 3D coordinates: {e}")
+                        coords = None
+                        _ = time_seconds
+                    
+                    # Create the key using f-string
+                    key = f"{action.replace(' ','_')}_{object_name}"
+                    
+                    # Merge dictionaries
+                    value = {
+                        **response[action][i],
+                        "coordinates": transform_coordinates(coords),
+                        "center_pixel": tuple(pixel),
+                        "actual_time": time_seconds,
+                        "confidence": confidence,
+                        "box": box.cpu().numpy() if isinstance(box, torch.Tensor) else box
+                    }
+                    
+                    result[key] = value
+                    print(f"Processed object {result}")
+                except Exception as e:
+                    print(f"Error processing object {object_name} at time {start_time}: {e}")
+                    continue
+                    
+            ret_response.update(result)
+        
+        return ret_response
+
+
+def ellm_studio_test(recording_dir:str):
+    payload = None
+
+    # Load the payload from a JSON file
+    with open("payload.json", "r") as file:
+        payload = json.load(file)
+
+    print(f"================ PAYLOAD ================ +\n{payload['question']}\n================ PAYLOAD ================")
+    analyzer = VideoAnalyzer(payload=payload)
+    # gcp_url = analyzer.upload_video_to_bucket("test1.mp4", f'{recording_dir}/color.mp4')
+    response = analyzer.get_gemini_response(payload['question'])
+    # print(response)
+    return response
+
+
+def demo_flow(recording_dir, response_annotations):
+    print(f"Recording directory: {recording_dir}")
+    print(f"Response annotations: {response_annotations}")
+    detector = ObjectDetector(api_key=GEMINI_API_KEY, recording_dir= recording_dir)
+    response = detector.get_real_world_coordinates(response_annotations)
+    print(f'RESPONSE FOR WHOLE VIDEO:\n================ \n{ response } \n================')
+
+    return response
 
 def ellm_studio_test(recording_dir:str):
     payload = None
@@ -248,20 +378,46 @@ def ellm_studio_test(recording_dir:str):
 
 # Example usage:
 if __name__ == "__main__":
-    recording_dir = 'recordings/20241225_140621'
+    recording_dir = 'recordings/Demo_Recording'
     response = ellm_studio_test(recording_dir=recording_dir)
     # print(response)
-    classes_to_detect = response['objects']
+    # classes_to_detect = response['objects']
     # TODO: Modify Prompt: get actions in agent response as a separate field to use differently, just like objects
-    actions = list(response.keys())[2:]
+    # actions = list(response.keys())[2:]
     # print(actions)
     # Initialize detector
     detector = ObjectDetector(api_key=GEMINI_API_KEY, recording_dir= recording_dir)
+    # print(f"DETECTOR RESULTS: {response}")
+
+# =======================================================
+    # d1 = {'start_time': '00:04', 'end_time': '00:03', 'object_name': 'can'}
+
+    # # Get 3D coordinates of everything and store in a dictionary
+    # time_seconds = convert_time_to_seconds(d1['start_time'])
+    # frame = detector.get_frame_at_time(time_seconds=time_seconds)
+    # center_x, center_y, box, confidence = detector.get_object_center(im=frame, target_class=d1['object_name'])
+    # coords, _ = get_pixel_3d_coordinates(
+    #     recording_dir,
+    #     time_seconds,
+    #     center_x,
+    #     center_y
+    #             )
+
+    # print(coords)
+# =======================================================
+
+    response_for_whole_video = detector.get_real_world_coordinates(response)
+    print(f'RESPONSE FOR WHOLE VIDEO:\n================ \n{ response_for_whole_video } \n================')
+
+
+
+
+# =======================================================
 
     # Get 3D coordinates
-    time_seconds = 1
-    target_class = 'soda_can_red'
-    result = detector.get_object_3d_coordinates(time_seconds, target_class)
-    print(f"3D coordinates at {time_seconds} seconds:", result)
+    # time_seconds = 1
+    # target_class = 'soda_can_red'
+    # result = detector.get_object_3d_coordinates(time_seconds, target_class)
+    # print(f"3D coordinates at {time_seconds} seconds:", result)
 
-    print(f'\n\n\n CORRECTED COORDINATES: {transform_coordinates(result["coordinates"])}')
+    # print(f'\n\n\n CORRECTED COORDINATES: {transform_coordinates(result["coordinates"])}')

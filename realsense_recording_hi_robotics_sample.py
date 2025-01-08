@@ -254,7 +254,7 @@ class RealSenseRecorder:
                 
                 # If recording, save frames
                 if self.is_recording:
-                    self._append_frames(color_frame, depth_frame, aligned_frames)
+                    self._append_frames(color_frame, depth_frame, frames)
                     self.frame_count += 1
                 
                 # Handle keyboard input
