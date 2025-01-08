@@ -10,6 +10,38 @@ import pyrealsense2 as rs
 import vertexai
 from google.cloud import storage
 import yaml
+import requests
+
+
+def process_images(rgb_zip_path, depth_zip_path, url_endpoint= "http://34.28.22.203:5000/process_pose", output_dir = "hamer_output"):
+   url = url_endpoint if url_endpoint else "http://34.28.22.203:5000/process_pose"
+   
+   files = {
+       'rgb_data': ('rgb.zip', open(rgb_zip_path, 'rb')),
+       'depth_data': ('depth.zip', open(depth_zip_path, 'rb'))
+   }
+   
+   try:
+       response = requests.post(url, files=files)
+       response.raise_for_status()
+       
+       # Save CSV response
+       with open(f'{output_dir}/predictions.csv', 'wb') as f:
+           f.write(response.content)
+       
+       print("CSV saved as predictions.csv")
+       
+   except requests.exceptions.RequestException as e:
+       print(f"Error: {str(e)}")
+   finally:
+       for _, f in files.values():
+           f.close()
+
+# Example usage
+# rgb_zip = "path/to/rgb.zip"
+# depth_zip = "path/to/depth.zip" 
+# process_images(rgb_zip, depth_zip)
+
 
 def load_config(config_path="config/config.yaml"):
     """
@@ -25,14 +57,13 @@ def load_config(config_path="config/config.yaml"):
         return yaml.safe_load(file)
 
 
-# vertexai.init(project=, location=, credentials=)
-
 calib_matrix_x = np.array([
       [ 0.068, -0.986,  0.152, -0.108],
       [ 0.998,  0.065, -0.023,  0.0 ],
       [ 0.013,  0.153,  0.988, -0.044],
       [ 0.0,    0.0,    0.0,    1.0  ]
     ])
+
 
 calib_matrix_y = np.array([
       [-0.47,   0.587,  -0.659,  0.73929],
@@ -41,9 +72,6 @@ calib_matrix_y = np.array([
       [ 0.0,    0.0,     0.0,    1.0    ]
     ])
 
-# model = genai.GenerativeModel(
-#   model_name='gemini-1.5-flash-002',
-# )
 
 def convert_video(input_path, output_path):
     # Create a temporary file
@@ -74,13 +102,6 @@ def deproject_pixel_to_point(depth_array, pixel_coords, intrinsics):
     point_3d = rs.rs2_deproject_pixel_to_point(intrinsics, [valid_x, valid_y], depth)
     return np.array(point_3d)
 
-def get_pixel_3d_coordinates_color_frame(frame, pixel_x, pixel_y):
-    """
-    
-    """
-    color_intrinsics , depth_intrinsics = get_intrinsics()
-
-
 
 def get_intrinsics(metadata_filepath: str):
     config = load_config()
@@ -108,6 +129,7 @@ def get_valid_depth(depth_array, x, y):
                         return depth, new_x, new_y
 
     return 0, x, y
+
 
 def get_pixel_3d_coordinates(recording_dir, time_seconds, pixel_x, pixel_y):
     """

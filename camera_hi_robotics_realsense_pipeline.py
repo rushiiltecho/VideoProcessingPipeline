@@ -307,7 +307,7 @@ class RealSenseRecorder:
         # Create directories if they don't exist
         os.makedirs(f'{self.current_savepath}/rgb_images_data_collection', exist_ok=True)
         os.makedirs(f'{self.current_savepath}/depth_images_data_collection', exist_ok=True)
-        os.makedirs(f'{self.current_savepath}/videos_data_collection', exist_ok=True)
+        # os.makedirs(f'{self.current_savepath}/videos_data_collection', exist_ok=True)
         os.makedirs(f'{self.current_savepath}/archives', exist_ok=True)
 
         
