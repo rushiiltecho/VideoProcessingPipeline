@@ -13,6 +13,7 @@ import torch
 from utils import convert_time_to_seconds, get_pixel_3d_coordinates, normalize_box, plot_bounding_boxes, transform_coordinates
 from vdeo_analysis_ellm_sudio import VideoAnalyzer
 
+
 class ObjectDetector:
     """A class to handle object detection using Google's Gemini model."""
     
@@ -116,14 +117,13 @@ class ObjectDetector:
             " ...}``` \n If there are more than one instance of an object, add"
             " them to the dictionary as '<object_name>', '<object_name>', etc."
         )
-            
+
             response = self.model.generate_content([im, prompt_text])
             print(response.text)
             boxes = json.loads(json_repair.repair_json(self._parse_to_json(response.text)))
             self.boxes= boxes
             return boxes
         except Exception as e:
-            print(f"EXCEPTION during detect_objects: {e}")    
 
     def detect_objects(self, image_path: Optional[str]= None, image: Optional[Image.Image] = None, target_class: str= None) -> List[Dict]:
         """
@@ -220,7 +220,7 @@ class ObjectDetector:
             
         boxes = self.get_real_boxes()
         self.visualize_detections(im, unscaled_boxes, self.recording_dir)
-        
+
         if target_class not in boxes:
             print(f"Target class {target_class} not found in detected boxes")
             return None, None, None, None
@@ -360,6 +360,20 @@ def demo_flow(recording_dir, response_annotations):
     response = detector.get_real_world_coordinates(response_annotations)
     print(f'RESPONSE FOR WHOLE VIDEO:\n================ \n{ response } \n================')
 
+    return response
+
+def ellm_studio_test(recording_dir:str):
+    payload = None
+
+    # Load the payload from a JSON file
+    with open("payload.json", "r") as file:
+        payload = json.load(file)
+
+    print(f"================ PAYLOAD ================ +\n{payload['question']}\n================ PAYLOAD ================")
+    analyzer = VideoAnalyzer(payload=payload)
+    # gcp_url = analyzer.upload_video_to_bucket("test1.mp4", f'{recording_dir}/color.mp4')
+    response = analyzer.get_gemini_response()
+    # print(response)
     return response
 
 # Example usage:

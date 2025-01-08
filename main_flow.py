@@ -52,12 +52,14 @@ class Application:
     def run(self,):
         while True:
             if self.is_running:
+
                 self.prepare()
                 """ This is the main step to run the application """
                 # Step 1: run the video analysis
                 # TODO: store this in some kind of universal log
     # =====================================================
                 response_annotations = self.video_analyzer.get_gemini_response(gcp_url=self.gcp_url)
+
     # =====================================================
                 # response_annotations = self.video_analyzer.get_ellm_response()
     # =====================================================

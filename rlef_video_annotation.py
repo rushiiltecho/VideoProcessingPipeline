@@ -15,7 +15,6 @@ class VideoUploader:
 
     def convert_video(self, input_path, output_path):
         os.system(f"ffmpeg -i '{input_path}' -c:v libx264 '{output_path}'")
-
     def bytes(self, file_path):
         with open(file_path, 'rb') as binary_file:
             binary_content = binary_file.read()

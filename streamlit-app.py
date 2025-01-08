@@ -1,6 +1,10 @@
 from datetime import datetime
 import json
 import re
+
+import json
+import numpy as np
+
 import streamlit as st
 import tempfile
 import os
@@ -19,6 +23,12 @@ from dsr_control_api.dsr_control_api.cobotclient import CobotClient
 
 output_path = None
 
+from utils import convert_video
+from rlef_video_annotation import VideoUploader
+from vdeo_analysis_ellm_sudio import VideoAnalyzer
+import pyrealsense2 as rs
+
+
 def main():
     st.set_page_config(page_title="Video Stream and Recording UI", layout="centered")
 
@@ -35,6 +45,7 @@ def main():
     mode = st.sidebar.selectbox(
         "Select Mode",
         ("Live Video Feed", "Upload Video File"),
+
         index=1
     )
 
@@ -45,26 +56,258 @@ def main():
     elif mode == "Upload Video File":
         handle_uploaded_file()
 
-def handle_live_feed_orig():
-    """Handles live feed with improved error handling and resource management"""
+
+def _handle_live_feed():
+    """
+    Demonstrates a minimal approach for displaying and optionally 
+    recording from a live video feed using OpenCV and Streamlit.
+    """
+    st.subheader("Live Video Feed")
+    st.write("Press 'Start Recording' to record and 'Stop Recording' to stop.")
+
+    # Attempt to open the webcam
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        st.error("Cannot access webcam. Please ensure a webcam is connected.")
+        return
+
+    recording = False
+    output_file = None
+    writer = None
+
+    # Columns for the start/stop buttons
+    col1, col2 = st.columns(2)
+    # with col1:
+    #     if st.button("Start Recording"):
+    #         if not recording:
+    #             # Create a temp file for saving recorded video
+    #             output_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+    #             st.success(f"Recording started. Output file: {output_file.name}")
+    #             recording = True
+
+    #             # Set up video writer to save the feed
+    #             # Adjust fps, frame size, and fourcc as needed
+    #             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    #             frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    #             frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    #             writer = cv2.VideoWriter(
+    #                 output_file.name,
+    #                 fourcc,
+    #                 20.0,  # frames per second
+    #                 (frame_width, frame_height),
+    #             )
+
+    with col1:
+        if st.button("Start Recording"):
+            if not recording:
+                recording = True
+
+                # 1) Use a consistent FourCC + extension
+                fourcc = cv2.VideoWriter_fourcc('m','p','4','v')  # or "MJPG", "avc1", etc.
+                
+                # 2) Generate a unique .avi path, no open file handle
+                fd, path = tempfile.mkstemp(suffix=".mp4")
+                os.close(fd)  # release the file descriptor immediately
+                output_file_path = path
+
+                st.success(f"Recording started. Output file: {output_file_path}")
+                
+                frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+                writer = cv2.VideoWriter(
+                    output_file_path,
+                    fourcc,
+                    20.0,  # FPS
+                    (frame_width, frame_height),
+                )
+
+    with col2:
+        if st.button("Stop Recording"):
+            if recording:
+                recording = False
+                if writer is not None:
+                    writer.release()
+                    writer = None
+                st.info("Recording stopped.")
+
+    stframe = st.empty()
+    
+    # Display the live feed in real-time
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            st.warning("Failed to grab frame from live feed.")
+            break
+
+        if recording and writer is not None:
+            writer.write(frame)
+
+        display_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        stframe.image(display_frame, channels="RGB")
+
+        # Check if user has clicked the "Stop" button or closed the app
+        if not st.session_state["run"]:
+            break
+
+        # Optionally remove or replace this safeguard:
+        # if not st.query_params:  # if you want to check emptiness
+        #     break
+
+    cap.release()
+    if writer is not None:
+        writer.release()
+
+    st.write("Live feed ended. If you recorded, the file is located at:")
+    if output_file:
+        st.write(output_file.name)
+
+def __handle_live_feed():
+    """
+    Demonstrates a minimal approach for displaying and optionally 
+    recording from a live video feed using OpenCV and Streamlit.
+    Uses Intel RealSense camera.
+    """
+    st.subheader("Live Video Feed")
+    st.write("Press 'Start Recording' to record and 'Stop Recording' to stop.")
+
+    # Set up RealSense pipeline
+    pipeline = rs.pipeline()
+    config = rs.config()
+    
+    # Enable color stream
+    config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+    
+    # Start the pipeline
+    pipeline.start(config)
+
+    recording = False
+    output_file = None
+    writer = None
+
+    # Columns for the start/stop buttons
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("Start Recording"):
+            if not recording:
+                recording = True
+
+                # 1) Use a consistent FourCC + extension
+                fourcc = cv2.VideoWriter_fourcc('m','p','4','v')  # or "MJPG", "avc1", etc.
+                
+                # 2) Generate a unique .mp4 path in the recordings directory
+                import datetime
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_file_path = f"recordings/recording_{timestamp}.mp4"
+
+                st.success(f"Recording started. Output file: {output_file_path}")
+                
+                frame_width = 640
+                frame_height = 480
+
+                writer = cv2.VideoWriter(
+                    output_file_path,
+                    fourcc,
+                    20.0,  # FPS
+                    (frame_width, frame_height),
+                )
+
+    with col2:
+        if st.button("Stop Recording"):
+            if recording:
+                recording = False
+                if writer is not None:
+                    writer.release()
+                    writer = None
+                st.info("Recording stopped.")
+
+    stframe = st.empty()
+    
+    # Display the live feed in real-time
+    while True:
+        # Wait for a new frame from the RealSense camera
+        frames = pipeline.wait_for_frames()
+        color_frame = frames.get_color_frame()
+
+        if not color_frame:
+            st.warning("Failed to grab frame from live feed.")
+            break
+
+        # Convert RealSense color frame to OpenCV format
+        frame = np.asanyarray(color_frame.get_data())
+
+        if recording and writer is not None:
+            writer.write(frame)
+
+        display_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        stframe.image(display_frame, channels="RGB")
+
+        # Check if user has clicked the "Stop" button or closed the app
+        if not st.session_state["run"]:
+            break
+
+    pipeline.stop()
+
+    st.write("Live feed ended. If you recorded, the file is located at:")
+    if output_file:
+        st.write(output_file.name)
+
+def is_camera_available():
+    """Check if the RealSense camera is available and not in use."""
+    try:
+        ctx = rs.context()
+        devices = ctx.query_devices()
+        if len(devices) == 0:
+            return False, "No RealSense devices found"
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+def handle_live_feed():
+    """
+    Demonstrates a minimal approach for displaying and optionally 
+    recording from a live video feed using OpenCV and Streamlit.
+    Uses Intel RealSense camera with proper error handling and cleanup.
+    """
+    recording = False
+    output_file = None
+    writer = None
+
     st.subheader("Live Video Feed")
     
-    # Initialize camera manager
-    camera_manager = RealSenseManager()
-    
-    if not camera_manager.initialize_camera():
-        st.error("Failed to initialize camera. Please ensure no other applications are using it and try again.")
+    # Check camera availability first
+    camera_available, error_msg = is_camera_available()
+    if not camera_available:
+        st.error(f"Camera not available: {error_msg}")
         return
-    
+
+    # Initialize pipeline outside the try block
+    pipeline = None
     try:
-        # Recording state
+        # Set up RealSense pipeline
+        pipeline = rs.pipeline()
+        config = rs.config()
+        
+        # Enable color stream
+        config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+        
+        # Try to start the pipeline
+        try:
+            pipeline.start(config)
+        except RuntimeError as e:
+            if "Device or resource busy" in str(e):
+                st.error("Camera is currently in use by another application. Please close other applications using the camera and try again.")
+                return
+            raise  # Re-raise other RuntimeErrors
+            
+        st.write("Press 'Start Recording' to record and 'Stop Recording' to stop.")
+
         recording = False
         writer = None
-        output_file_path = None
-        
-        # UI Controls
+
+        # Columns for the start/stop buttons
         col1, col2 = st.columns(2)
-        
         with col1:
             if st.button("Start Recording"):
                 if not recording:
@@ -72,7 +315,6 @@ def handle_live_feed_orig():
                     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
                     fd, output_file_path = tempfile.mkstemp(suffix='.mp4')
                     os.close(fd)
-                    
                     writer = cv2.VideoWriter(
                         output_file_path,
                         fourcc,
@@ -335,7 +577,7 @@ def process_uploaded_video(video_path):
         st.json(response_annotations)
     else:
         st.warning("No response annotations found.")
-    
+   
     progress_bar.progress(60)
     st.write(f'Getting Coordinates from the video Analysis: ')
     response_coordinates= None
@@ -357,6 +599,7 @@ def process_uploaded_video(video_path):
     
     progress_bar.progress(60)
 
+
     # Step 4: Upload annotations to RLEF
     st.write("Uploading annotations to RLEF tool...")
     rlef_annotations = VideoUploader()
@@ -374,6 +617,7 @@ def process_uploaded_video(video_path):
     progress_bar.progress(100)
     st.success("All steps completed successfully!")
 
+    
 def __advanced_handle_uploaded_file():
     """Handles uploading and processing of a recording directory containing color.mp4, depth_visualization.mp4, metadata.json, and frames.h5"""
     st.subheader("Upload Recording Directory")
@@ -617,8 +861,6 @@ def process_saved_recording(video_path):
     except Exception as e:
         st.error(f"Error processing recording: {str(e)}")
         progress_bar.progress(100)
-
-
 
 # Use session state to help with stop/clean mechanism
 if "run" not in st.session_state:

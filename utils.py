@@ -9,6 +9,7 @@ import numpy as np
 import pyrealsense2 as rs
 import vertexai
 from google.cloud import storage
+
 import yaml
 import requests
 
@@ -57,13 +58,14 @@ def load_config(config_path="config/config.yaml"):
         return yaml.safe_load(file)
 
 
+
+
 calib_matrix_x = np.array([
       [ 0.068, -0.986,  0.152, -0.108],
       [ 0.998,  0.065, -0.023,  0.0 ],
       [ 0.013,  0.153,  0.988, -0.044],
       [ 0.0,    0.0,    0.0,    1.0  ]
     ])
-
 
 calib_matrix_y = np.array([
       [-0.47,   0.587,  -0.659,  0.73929],
@@ -130,7 +132,6 @@ def get_valid_depth(depth_array, x, y):
 
     return 0, x, y
 
-
 def get_pixel_3d_coordinates(recording_dir, time_seconds, pixel_x, pixel_y):
     """
     Get the 3D coordinates (X, Y, Z) of a specific pixel at a specific time in the video
@@ -192,8 +193,7 @@ def get_pixel_3d_coordinates(recording_dir, time_seconds, pixel_x, pixel_y):
     except Exception as e:
         print(f"Error in get_pixel_3d_coordinates: {e}")
         return None, time_seconds
-    
-    
+
 def _transform_coordinates(point_xyz, calib_matrix_x=calib_matrix_x, calib_matrix_y=calib_matrix_y):
     """
     Transform point through both calibration matrices
@@ -361,6 +361,7 @@ def plot_bounding_boxes(im, noun_phrases_and_positions):
             outline=colors[-14], width=5
         )
 
+
         # Draw the text
         draw.text((abs_x1 + 8, abs_y1 + 6), noun_phrase, fill=color)
 
@@ -397,7 +398,6 @@ def convert_time_to_seconds(time):
         return m * 60 + s
     else:
         raise ValueError("Invalid time format")
-
 
 
 if __name__ == "__main__":
