@@ -9,15 +9,15 @@ from datetime import datetime
 
 camera = IntelRealSenseCamera()
 
-def create_zip_archive(source_dir, zip_name):
+def create_zip_archive(source_dir, zip_name_with_path):
     """Create a zip file from a directory"""
-    with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
+    with zipfile.ZipFile(zip_name_with_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
         for root, _, files in os.walk(source_dir):
             for file in files:
                 file_path = os.path.join(root, file)
                 arcname = os.path.relpath(file_path, source_dir)
                 zipf.write(file_path, arcname)
-    print(f"Created zip archive: {zip_name}")
+    print(f"Created zip archive: {zip_name_with_path}")
 
 def collect_data():
     # Create directories if they don't exist

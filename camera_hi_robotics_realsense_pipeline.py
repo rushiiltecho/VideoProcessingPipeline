@@ -8,6 +8,8 @@ import h5py
 import numpy as np
 from hi_robotics.vision_ai.cameras.intel_realsense_camera import IntelRealSenseCamera
 
+from utils import create_zip_archive
+
 
 
 class RealSenseRecorder:
@@ -178,9 +180,9 @@ class RealSenseRecorder:
                     json.dump(metadata, f, indent=4)
             
         self.is_recording = False
-        self.save_zips()
         print(f"Recording stopped. Frames captured: {self.frame_count}")
-
+        create_zip_archive(f'{self.current_savepath}/rgb_images_data_collection', f"{self.current_savepath}/archives/rgb_images_data_collection.zip")
+        create_zip_archive(f'{self.current_savepath}/depth_images_data_collection', f"{self.current_savepath}/archives/depth_images_data_collection.zip")
         # [IGNORE]<--- Here is the addition:
         if self.recording_stopped_callback is not None:
             self.recording_stopped_callback()
@@ -271,37 +273,12 @@ class RealSenseRecorder:
             self.camera.release_camera()
             cv2.destroyAllWindows()
 
-    def save_zips(self,):
-        # Create timestamp for unique zip names
-        # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        # Create zip archives
-        rgb_zip_name = f"{self.current_savepath}/archives/rgb_images_data_collection.zip"
-        depth_zip_name = f"{self.current_savepath}/archives/depth_images_data_collection.zip"
-
-        
-        print("Creating zip archives...")
-        self.create_zip_archive(f'{self.current_savepath}/archives', rgb_zip_name)
-        self.create_zip_archive(f'{self.current_savepath}/archives', depth_zip_name)
-        
-        print("Archives created successfully!")
-
     def get_current_savepath(self,):
         return self.current_savepath
     
     def get_current_recording(self,):
         return self.recording_id
-    
-    def create_zip_archive(self, source_dir, zip_name):
-        """Create a zip file from a directory"""
-        with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for root, _, files in os.walk(source_dir):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    arcname = os.path.relpath(file_path, source_dir)
-                    zipf.write(file_path, arcname)
-        print(f"Created zip archive: {zip_name}")
-    
+
     def data_collection_directory_creation(self,):
         """Collect data from the camera and save it to a zip archive"""
         # Create directories if they don't exist

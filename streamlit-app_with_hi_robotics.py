@@ -120,8 +120,23 @@ def handle_live_feed():
                 
                 # If recording, save frames
                 if recorder.is_recording:
+                    prev_time = time.time()
                     recorder._append_frames(rgb_frame, depth_frame)
                     recorder.frame_count += 1
+
+                    current_time = time.time()
+                    if current_time - prev_time < 1.0 / recorder.fps:
+                        # Save RGB image:
+                        rgb_path = f"{recorder.current_savepath}/rgb_images_data_collection/image_{recorder.frame_count}.jpg"
+                        cv2.imwrite(rgb_path, color_image)
+
+                        # Save depth image as .npy:
+                        depth_path = f"{recorder.current_savepath}/depth_images_data_collection/image_{recorder.frame_count}.npy"
+                        np.save(depth_path, depth_image)
+
+                        # Increment image counter and update last capture time
+                        print(f"Saved : {recorder.frame_count}")
+                        prev_time = current_time
                     
             except Exception as e:
                 st.error(f"Error during frame capture: {str(e)}")

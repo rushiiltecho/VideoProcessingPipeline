@@ -3,6 +3,7 @@ import os
 import re
 import shutil
 import tempfile
+import zipfile
 import h5py
 import json
 import numpy as np
@@ -13,6 +14,16 @@ from google.cloud import storage
 import yaml
 import requests
 
+
+def create_zip_archive(source_dir, zip_name_with_path):
+    """Create a zip file from a directory"""
+    with zipfile.ZipFile(zip_name_with_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for root, _, files in os.walk(source_dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+                arcname = os.path.relpath(file_path, source_dir)
+                zipf.write(file_path, arcname)
+    print(f"Created zip archive: {zip_name_with_path}")
 
 def process_images(rgb_zip_path, depth_zip_path, url_endpoint= "http://34.28.22.203:5000/process_pose", output_dir = "hamer_output"):
    url = url_endpoint if url_endpoint else "http://34.28.22.203:5000/process_pose"
