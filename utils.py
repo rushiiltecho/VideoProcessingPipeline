@@ -53,6 +53,7 @@ def process_images(rgb_zip_path, depth_zip_path, url_endpoint= "http://techoluti
        
        print("CSV saved as predictions.csv")
        return decoded_response
+
 # Example usage
 # rgb_zip = "path/to/rgb.zip"
 # depth_zip = "path/to/depth.zip" 

@@ -469,31 +469,33 @@ def process_saved_recording(video_path):
 
 
         # Step 4: Upload to RLEF
-        st.write("Uploading to RLEF...")
-        rlef_uploader = VideoUploader()
-        #TODO: change the arguments in upload to rlef to include the updated payload alongwith the prediction CSV.
-        status, rlef_response_text = rlef_uploader.upload_to_rlef(
-            rlef_url="https://autoai-backend-exjsxe2nda-uc.a.run.app/resource/",
-            video_filepath=video_path,
-            video_annotations=annotations,
-            csv_filepath=None
-        )
-    
+        with st.spinner("Uploading to RLEF..."):
+            rlef_uploader = VideoUploader()
+            #TODO: change the arguments in upload to rlef to include the updated payload alongwith the prediction CSV.
+            status, rlef_response_text = rlef_uploader.upload_to_rlef(
+                rlef_url="https://autoai-backend-exjsxe2nda-uc.a.run.app/resource/",
+                video_filepath=video_path,
+                video_annotations=annotations,
+                csv_filepath=None
+            )
         
-        if status == 200:
-            st.success("Processing completed successfully!")
-        else:
-            st.warning(f"RLEF upload returned status code: {status}")
+            
+            if status == 200:
+                st.success("Processing completed successfully!")
+            else:
+                st.warning(f"RLEF upload returned status code: {status}")
 
-        st.write(f'Getting Coordinates from the video Analysis: ')
         response_coordinates= None
         coordinates = None
         boxes = None
+        csv_hamer_output = None
+
         with st.spinner("Generating response..."):
             try:
-                recording_dir = 'recordings/20250109_155539'
+                recording_dir = 'recordings/Recorded_Demo'
                 rgb_zip_path = f'{recording_dir}/archives/rgb_images_data_collection.zip'
                 depth_zip_path = f'{recording_dir}/archives/depth_images_data_collection.zip'
+                st.write(f'Getting Coordinates from the video Analysis: ')
                 # response_coordinates = demo_flow(recording_dir=recording_dir, response_annotations=annotations)
                 detector = ObjectDetector(api_key=GEMINI_API_KEY, recording_dir= recording_dir)
                 response_coordinates = detector.get_real_world_coordinates(annotations)
@@ -516,17 +518,25 @@ def process_saved_recording(video_path):
                 payload_for_cobot_client["fundamental_actions"] = response_coordinates    
                 payload_for_cobot_client["rlef_resource_id"] = rlef_response_text['_id']
                 payload_for_cobot_client["video_gcp_url"] = gcp_url
-                payload_for_cobot_client["trajectory_csv"] = process_images(rgb_zip_path=rgb_zip_path, depth_zip_path=depth_zip_path, output_dir=f"{recording_dir}/hamer_output")
+                # --------------------------------------
+                # csv_hamer_output = process_images(rgb_zip_path=rgb_zip_path, depth_zip_path=depth_zip_path, output_dir=f"{recording_dir}/hamer_output")
+                with open(f"{recording_dir}/hamer_output/predictions_hamer_sample.csv", "r") as file:
+                    csv_hamer_output = file.read()
+                # --------------------------------------
+                payload_for_cobot_client["trajectory_csv"] = csv_hamer_output if csv_hamer_output else ""
                 # ============ PLACEHOLDER: send the data to cobot client ================
                 print("==================== PAYLOAD FOR COBOT CLIENT: ====================\n", payload_for_cobot_client)
                 # ========================================================================
-
+                if response_coordinates:
+                    st.write("Coordinate Location Received...:")
+                    st.json(response_coordinates)
+                    print(f"payload_data: {payload_for_cobot_client}")
+                cobot_client_status = cobot_client.send_trajectory_data(payload_for_cobot_client)
+                print(f"COBOT_CLIENT_STATUS: {cobot_client_status}")
             except Exception as e:
                 st.error(f"Error analyzing video: {e}")
                 return
-        if response_coordinates:
-            st.write("Coordinate Location Received...:")
-            st.json(response_coordinates)
+
         
         progress_bar.progress(100)
 
