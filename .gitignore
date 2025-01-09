@@ -12,3 +12,6 @@ recordings/
 *.jpg
 *.pt
 *_api_key.py
+*_constant_*
+*.zip
+hamer_output/

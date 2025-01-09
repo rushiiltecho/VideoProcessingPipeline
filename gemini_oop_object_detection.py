@@ -200,71 +200,6 @@ class ObjectDetector:
             return None
         return {i: normalize_box(j) for i, j in self.boxes.items()}
     
-    def __get_object_center(self, target_class):
-        """
-        Get the center of the detected object.
-        
-        Args:
-
-            target_class (str): Object class to detect
-            
-        Returns:
-            Tuple[int, int, np.ndarray, float]: Center coordinates, bounding box, confidence score
-        """
-        # Detect object
-        boxes = self.get_real_boxes()
-        if target_class not in boxes:
-            return None, None, None, None
-        
-        # Get bounding box and confidence score
-        box = boxes[target_class]
-        confidence = 100
-        
-        # Calculate center coordinates
-        center_x = int((box[0] + box[2]) / 2)
-        center_y = int((box[1] + box[3]) / 2)
-        
-        return center_x, center_y, box, confidence
-    
-    def __get_object_3d_coordinates(self, time_seconds, target_class):
-        """
-        Get 3D coordinates of object center at specific time
-        
-        Args:
-            time_seconds (float): Time in video to analyze
-            target_class (str): Object class to detect (must be in COCO classes)
-            
-        Returns:
-            dict: Dictionary containing:
-                - coordinates: (Z , Y , X) coordinates in meters
-                - center_pixel: (u, v) pixel coordinates
-                - actual_time: actual timestamp used
-                - confidence: detection confidence
-                - box: detection bounding box
-        """
-        # Get frame at specified time
-        frame = self.get_frame_at_time(time_seconds)
-        
-        # Detect object and get center point
-        center_x, center_y, box, confidence = self.get_object_center(target_class
-        )
-        
-        # Get 3D coordinates of center point
-        coords, actual_time = get_pixel_3d_coordinates(
-            self.recording_dir,
-            time_seconds,
-            center_x,
-            center_y
-        )
-        
-        return {
-            "coordinates": coords,
-            "center_pixel": (center_x, center_y),
-            "actual_time": actual_time,
-            "confidence": confidence,
-            "box": box.cpu().numpy() if isinstance(box, torch.Tensor) else box
-        }
-
     def get_object_center(self, im:Image, target_class):
         """
         Get the center of the detected object.
@@ -353,7 +288,8 @@ class ObjectDetector:
                 try:
                     object_name = response[action][i]['object_name']
                     start_time = response[action][i]['start_time']
-                    time_seconds = convert_time_to_seconds(start_time)
+                    end_time = response[action][i]['end_time']
+                    time_seconds = convert_time_to_seconds(end_time if 'plac' in action.lower() else start_time)
                     
                     # Get frame and detect object
                     frame = self.get_frame_at_time(time_seconds)
@@ -365,7 +301,7 @@ class ObjectDetector:
                     
                     # Convert pixel coordinates to floats for rs2_deproject_pixel_to_point
                     pixel = [float(center_x), float(center_y)]
-                    print(f"Pixel coordinates: {pixel}")
+                    # print(f"Pixel coordinates: {pixel}")
                     try:
                         coords, _ = get_pixel_3d_coordinates(
                             self.recording_dir,
@@ -392,7 +328,7 @@ class ObjectDetector:
                     }
                     
                     result[key] = value
-                    print(f"Processed object {result}")
+                    # print(f"Processed object {result}")
                 except Exception as e:
                     print(f"Error processing object {object_name} at time {start_time}: {e}")
                     continue
@@ -415,63 +351,6 @@ def ellm_studio_test(recording_dir:str):
     response = analyzer.get_gemini_response(payload['question'])
     # print(response)
     return response
-
-
-
-
-
-
-
-
-sample_response = {
-    "overall_task_name": "rearranging objects on a table",
-    "objects": [
-        "mug",
-        "water bottle",
-        "soda can"
-    ],
-    "picking_up": [
-        {
-            "start_time": "00:00",
-            "end_time": "00:03",
-            "object_name": "mug",
-            "notes": "Human picks up the mug."
-        },
-        {
-            "start_time": "00:03",
-            "end_time": "00:05",
-            "object_name": "water bottle",
-            "notes": "Human picks up the water bottle."
-        },
-        {
-            "start_time": "00:05",
-            "end_time": "00:08",
-            "object_name": "soda can",
-            "notes": "Human picks up the soda can."
-        }
-    ],
-    "placing": [
-        {
-            "start_time": "00:03",
-            "end_time": "00:04",
-            "object_name": "mug",
-            "notes": "Human places the mug down."
-        },
-        {
-            "start_time": "00:05",
-            "end_time": "00:06",
-            "object_name": "water bottle",
-            "notes": "Human places the water bottle down."
-        },
-        {
-            "start_time": "00:07",
-            "end_time": "00:08",
-            "object_name": "soda can",
-            "notes": "Human places the soda can down."
-        }
-    ]
-}
-
 
 
 def demo_flow(recording_dir, response_annotations):

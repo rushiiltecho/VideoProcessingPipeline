@@ -1,7 +1,7 @@
 import json
 import json_repair
 import numpy as np
-from gemini_constant_api_key import GEMINI_API_KEY
+from gemini_api_key_example import GEMINI_API_KEY
 import google.generativeai as genai
 from PIL import Image
 

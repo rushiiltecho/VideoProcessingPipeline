@@ -10,7 +10,7 @@ from vdeo_analysis_ellm_sudio import VideoAnalyzer
 
 class VideoUploader:
     def __init__(self, filepath:Optional[str]= None, video_annotations:Optional[dict]=None):
-        self.filepath = filepath
+        self.video_filepath = filepath
         self.video_annotations = video_annotations
 
     def convert_video(self, input_path, output_path):
@@ -22,43 +22,16 @@ class VideoUploader:
             encoded_content = base64.b64encode(binary_content)
             return encoded_content
 
-    def upload_to_rlef(self):
-        converted_filepath = self.filepath
-
-        self.convert_video(self.filepath, converted_filepath)
-
-        url = 'https://autoai-backend-exjsxe2nda-uc.a.run.app/resource/'
-
-        payload = {
-            'model': '67695dc462913593227a4227',
-            'status': 'backlog',
-            'csv': 'csv',
-            'label': 'object_grab',
-            'tag': 'loaner boxes',
-            'prediction': 'predicted',
-            'confidence_score': '100',
-            'videoAnnotations': self._deprecated_generate_video_annotations()
-        }
-
-        files = {
-            'resource': (converted_filepath, open(converted_filepath, 'rb'))
-        }
-
-        response = requests.post(url, headers={}, data=payload, files=files)
-
-        print(response.text)
-        return response.status_code
-
-    def upload_to_rlef(self, url,filepath, video_annotations):
+    def upload_to_rlef(self, rlef_url ,video_filepath, video_annotations, csv_filepath):
         self.video_annotations = video_annotations
-        self.filepath = filepath
-        converted_filepath = f'{self.filepath}_converted.mp4'
-        self.convert_video(self.filepath, converted_filepath)
+        self.video_filepath = video_filepath
+        converted_filepath = f'{self.video_filepath}_converted.mp4'
+        self.convert_video(self.video_filepath, converted_filepath)
 
         payload = {
             'model': '67695dc462913593227a4227',
             'status': 'backlog',
-            'csv': 'csv',
+            'csv': 'self.bytes(csv_filepath)', #TODO: get the csv file as text here
             'label': 'object_grab',
             'tag': 'loaner boxes',
             'prediction': 'predicted',
@@ -71,32 +44,39 @@ class VideoUploader:
         }
 
         response = requests.post(
-            url, 
+            rlef_url , 
             headers={},
             data=payload,
             files=files
         )
 
-        print(response.text)
-        return response.status_code
+        print(f"RLEF RESPONSE STATUS: =========== {response.status_code}")
+        processed_response = json.loads(json_repair.repair_json(response.text))
+        # print(f"RLEF RESPONSE TEXT: =========== {processed_response}")
+
+        return response.status_code, processed_response
 
     def generate_video_annotations(self, video_annotations):
         video_annotations_list = []
-        for i in video_annotations.keys():
-            if isinstance(video_annotations[i], list) and all(isinstance(item, dict) for item in video_annotations[i]):
-                for j in range(len(video_annotations[i])):
-                    # print(self.video_annotations[i][j], i)
-                    video_annotations_list.append({
-                        "label": i,
-                        "tag": video_annotations[i][j]['object_name'],
-                        "annotationPrediction": {
-                            "startTimeInSeconds": self.convert_time_to_seconds(video_annotations[i][j]['start_time']),
-                            "endTimeInSeconds": self.convert_time_to_seconds(video_annotations[i][j]['end_time'])
-                        }
-                    })
+        try:
+            for i in video_annotations.keys():
+                if isinstance(video_annotations[i], list) and all(isinstance(item, dict) for item in video_annotations[i]):
+                    for j in range(len(video_annotations[i])):
+                        # print(self.video_annotations[i][j], i)
+                        video_annotations_list.append({
+                            "label": i,
+                            "tag": video_annotations[i][j]['object_name'],
+                            "annotationPrediction": {
+                                "startTimeInSeconds": self.convert_time_to_seconds(video_annotations[i][j]['start_time']),
+                                "endTimeInSeconds": self.convert_time_to_seconds(video_annotations[i][j]['end_time'])
+                            }
+                        })
+        except Exception as e:
+            print("Annotations inapporpriate")
 
-        print("VIDEO ANNOTATIONS",json_repair.repair_json(str(video_annotations_list)))
-        return str(video_annotations_list).replace("'", '"')
+        finally:
+            # print("VIDEO ANNOTATIONS",json_repair.repair_json(str(video_annotations_list)))
+            return str(video_annotations_list).replace("'", '"')
 
 
     def _deprecated_generate_video_annotations(self):
