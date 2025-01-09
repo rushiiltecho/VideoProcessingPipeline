@@ -477,8 +477,8 @@ if __name__ == "__main__":
     # output_csv_path = "decoded_example.csv"  # Output CSV file path
     # base64_to_csv(base64_encoded_csv, output_csv_path)
     
-    rgb_zip = "recordings/20250109_155539/archives/rgb_images_data_collection.zip"
-    depth_zip = "recordings/20250109_155539/archives/depth_images_data_collection.zip"
+    rgb_zip = "recordings/Recorded_Demo/archives/rgb_images_data_collection.zip"
+    depth_zip = "recordings/Recorded_Demo/archives/depth_images_data_collection.zip"
     process_images(rgb_zip, depth_zip)
 
 

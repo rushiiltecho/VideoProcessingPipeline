@@ -492,7 +492,7 @@ def process_saved_recording(video_path):
 
         with st.spinner("Generating response..."):
             try:
-                recording_dir = 'recordings/Recorded_Demo'
+                recording_dir = 'recordings/Recorded_Demo_1'
                 rgb_zip_path = f'{recording_dir}/archives/rgb_images_data_collection.zip'
                 depth_zip_path = f'{recording_dir}/archives/depth_images_data_collection.zip'
                 st.write(f'Getting Coordinates from the video Analysis: ')
@@ -501,7 +501,7 @@ def process_saved_recording(video_path):
                 response_coordinates = detector.get_real_world_coordinates(annotations)
                 boxes = [response_coordinates[i]['box'] for i in response_coordinates.keys()]
                 coordinates = [response_coordinates[i]['coordinates'] for i in response_coordinates.keys()]
-                cobot_client = CobotClient(ip="192.168.0.129", port="8001")
+                cobot_client = CobotClient(ip="192.168.0.149", port="8001")
                 print("RESPONSE COORDINATES TO SEND: ", response_coordinates)
                 # ========================================================================================
                 # for key, value in response_coordinates.items():
