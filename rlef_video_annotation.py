@@ -97,28 +97,49 @@ class VideoUploader:
         print("VIDEO ANNOTATIONS",json_repair.repair_json(str(video_annotations_list)))
         return str(video_annotations_list).replace("'", '"')
 
-    # def generate_video_annotations(self):
-    #     video_annotations = []
-    #     for picking_up in self.video_annotations['picking_up']:
-    #         video_annotations.append({
-    #             "label": "picking_up",
-    #             "tag": picking_up['object_name'],
-    #             "annotationPrediction": {
-    #                 "startTimeInSeconds": self.convert_time_to_seconds(picking_up['start_time']),
-    #                 "endTimeInSeconds": self.convert_time_to_seconds(picking_up['end_time'])
-    #             }
-    #         })
-    #     for placing in self.video_annotations['placing']:
-    #         video_annotations.append({
-    #             "label": "placing",
-    #             "tag": placing['object_name'],
-    #             "annotationByExpert": {
-    #                 "startTimeInSeconds": self.convert_time_to_seconds(placing['start_time']),
-    #                 "endTimeInSeconds": self.convert_time_to_seconds(placing['end_time']),
-    #                 "approvalStatus": "approved"
-    #             }
-    #         })
-    #     return str(video_annotations).replace("'", '"')
+    # Function to get the signed URL from the RLEF API
+    def get_signed_url(self, rlef_url= "https://autoai-backend-exjsxe2nda-uc.a.run.app/resource/uploadHdf5File", resource_id =None, hdf5_filename=None):
+        url = rlef_url if rlef_url else "https://autoai-backend-exjsxe2nda-uc.a.run.app/resource/uploadHdf5File"
+        form_data = {
+            "resourceId": resource_id,
+            "hdf5FileName": hdf5_filename
+        }
+        response = requests.put(url, data=form_data)
+        
+        if response.status_code == 200:
+            try:
+                response_dict = response.json()
+                return response_dict.get("hdf5FileSignedUrlForUpload")
+            except json.JSONDecodeError:
+                print("Error: Response is not valid JSON.")
+                return None
+        else:
+            print(f"Failed to get signed URL. Status code: {response.status_code}")
+            return None
+
+    # Function to upload the HDF5 file to the signed URL
+    def upload_csv_file(self, signed_url, hdf5_filepath):
+        headers = {"Content-Type": "application/octet-stream"}
+        
+        with open(hdf5_filepath, 'rb') as file_data:
+            response = requests.put(signed_url, headers=headers, data=file_data)
+        
+        print(f"Status Code: {response.status_code}")
+        print(f"Response from the server: {response.text}")
+
+    # Main function to coordinate the process
+    def process_and_upload_csv(self, video_bucket_id, csv_filepath,csv_filename):
+        #THINK
+        # Step 3: Get signed URL for uploading the HDF5 file
+        signed_url = self.get_signed_url(video_bucket_id, csv_filename)
+        print(f"Signed URL: {signed_url}")
+        if signed_url:
+            print(f"Signed URL: {signed_url}")
+            
+            # Step 4: Upload the HDF5 file using the signed URL
+            self.upload_csv_file(signed_url, csv_filepath)
+        else:
+            print("Failed to obtain the signed URL.")
 
     def convert_time_to_seconds(self, time):
         time_parts = time.split(':')

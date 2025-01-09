@@ -515,7 +515,14 @@ def process_saved_recording(video_path):
                     # res = cobot_client.send_task(task_type=task_type, task_data=value['coordinates'])
                     # print("COBOT_API_RESPONSE: ", res)
                 # ========================================================================================
-                payload_for_cobot_client["fundamental_actions"] = response_coordinates    
+                # payload_for_cobot_client["fundamental_actions"] = response_coordinates  
+                payload_for_cobot_client["fundamental_actions"] = {
+                    key: {
+                        **value,
+                        "coordinates": value["coordinates"].tolist() if isinstance(value["coordinates"], np.ndarray) else value["coordinates"]
+                    }
+                    for key, value in response_coordinates.items()
+                }  
                 payload_for_cobot_client["rlef_resource_id"] = rlef_response_text['_id']
                 payload_for_cobot_client["video_gcp_url"] = gcp_url
                 # --------------------------------------
@@ -523,6 +530,7 @@ def process_saved_recording(video_path):
                 with open(f"{recording_dir}/hamer_output/predictions_hamer_sample.csv", "r") as file:
                     csv_hamer_output = file.read()
                 # --------------------------------------
+                # rlef_uploader.process_and_upload_csv(video_bucket_id=payload_for_cobot_client["rlef_resource_id"], csv_filepath=f'{recording_dir}/hamer_output/predictions_hamer_sample.csv', csv_filename='predictions_hamer_sample.csv')
                 payload_for_cobot_client["trajectory_csv"] = csv_hamer_output if csv_hamer_output else ""
                 # ============ PLACEHOLDER: send the data to cobot client ================
                 print("==================== PAYLOAD FOR COBOT CLIENT: ====================\n", payload_for_cobot_client)
@@ -530,9 +538,9 @@ def process_saved_recording(video_path):
                 if response_coordinates:
                     st.write("Coordinate Location Received...:")
                     st.json(response_coordinates)
-                    print(f"payload_data: {payload_for_cobot_client}")
+                    print(type(payload_for_cobot_client))
                 cobot_client_status = cobot_client.send_trajectory_data(payload_for_cobot_client)
-                print(f"COBOT_CLIENT_STATUS: {cobot_client_status}")
+                print(f"COBOT_CLIENT_STATUS: Updated Trajectory CSV {cobot_client_status}")
             except Exception as e:
                 st.error(f"Error analyzing video: {e}")
                 return
