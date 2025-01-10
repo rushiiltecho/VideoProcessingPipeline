@@ -110,6 +110,7 @@ def process_and_upload(filepath, hdf5_filepath, hdf5_filename):
     response_json = upload_video(filepath)
     
     if response_json and '_id' in response_json:
+        print(response_json)
         video_bucket_id = response_json['_id']
         print(f"Extracted Video Bucket ID: {video_bucket_id}")
         
@@ -129,7 +130,7 @@ def process_and_upload(filepath, hdf5_filepath, hdf5_filename):
 # Execute the entire process
 if __name__ == "__main__":
     video_path = "/home/ai_hand/Downloads/main_flow_dec27_DEMO/recordings/Recorded_Demo/color.mp4"
-    hdf5_path = "recordings/Recorded_Demo/hamer_output/predictions_hamer_sample.csv"
+    hdf5_path = "recordings/Recorded_Demo/hamer_output/predictions_hamer.csv"
     hdf5_filename = "predictions_hamer_sample.csv"
     
     process_and_upload(video_path, hdf5_path, hdf5_filename)

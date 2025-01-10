@@ -14,7 +14,7 @@ from gemini_oop_object_detection import ObjectDetector, demo_flow
 from lit_demo_flow import RealSenseManager
 from camera_hi_robotics_realsense_pipeline import RealSenseRecorder
 from rlef_video_annotation import VideoUploader
-from utils import convert_video, process_images
+from utils import convert_video, get_signed_url, process_images, upload_hdf5_file
 from vdeo_analysis_ellm_sudio import VideoAnalyzer
 from dsr_control_api.dsr_control_api.cobotclient import CobotClient
 
@@ -108,7 +108,7 @@ def handle_live_feed():
             if st.button("🟢 Start Recording", use_container_width=True, 
                         disabled=st.session_state.get("recording_status", False)):
                 st.session_state["recording_status"] = True
-                recorder.start_recording()
+                recorder.start_recording('Recorded_Demo')
                 st.success(f"📝 Recording to: {recorder.get_current_savepath()}")
                 global output_path
                 output_path = recorder.get_current_savepath()
@@ -140,6 +140,9 @@ def handle_live_feed():
         st.markdown("### 📺 Live Preview")
         frame_placeholder = st.empty()
         
+        interval = 1/10  # seconds between frames
+        last_capture_time = time.time()
+
         while st.session_state.get("run", True):
             try:
                 rgb_frame, depth_frame = camera.get_frames()
@@ -151,23 +154,22 @@ def handle_live_feed():
                 display_image = cv2.cvtColor(display_image, cv2.COLOR_BGR2RGB)
                 
                 frame_placeholder.image(display_image, channels="RGB", use_container_width=True,
-                                     caption="Live Feed (Color + Depth)")
+                                    caption="Live Feed (Color + Depth)")
                 
-                if recorder.is_recording:
-                    prev_time = time.time()
+                current_time = time.time()
+                
+                if recorder.is_recording and (current_time - last_capture_time >= interval):
                     recorder._append_frames(rgb_frame, depth_frame)
                     recorder.frame_count += 1
 
-                    current_time = time.time()
-                    if current_time - prev_time < 1.0 / recorder.fps:
-                        with st.spinner("Saving frames..."):
-                            rgb_path = f"{recorder.current_savepath}/rgb_images_data_collection/image_{recorder.frame_count}.jpg"
-                            cv2.imwrite(rgb_path, color_image)
+                    with st.spinner("Saving frames..."):
+                        rgb_path = f"{recorder.current_savepath}/rgb_images_data_collection/image_{recorder.frame_count}.jpg"
+                        cv2.imwrite(rgb_path, color_image)
 
-                            depth_path = f"{recorder.current_savepath}/depth_images_data_collection/image_{recorder.frame_count}.npy"
-                            np.save(depth_path, depth_image)
+                        depth_path = f"{recorder.current_savepath}/depth_images_data_collection/image_{recorder.frame_count}.npy"
+                        np.save(depth_path, depth_image)
 
-                        prev_time = current_time
+                    last_capture_time = current_time
                     
             except Exception as e:
                 st.error(f"❌ Frame capture error: {str(e)}")
@@ -199,13 +201,13 @@ def handle_uploaded_file():
     # File upload section with enhanced UI
     upload_col1, upload_col2 = st.columns([1, 1])
     
-    with upload_col1:
-        uploaded_file = st.file_uploader(
-            "Drop your video file here",
-            type=["mp4", "avi", "mkv"],
-            help="Supported formats: MP4, AVI, MKV"
-        )
-    
+
+    uploaded_file = st.file_uploader(
+        "Drop your video file here",
+        type=["mp4", "avi", "mkv"],
+        help="Supported formats: MP4, AVI, MKV"
+    )
+
     # with upload_col2:
     #     st.markdown("### 📋 File Info")
     #     if uploaded_file:
@@ -246,114 +248,134 @@ def handle_uploaded_file():
 
 def process_saved_recording(video_path):
     """Enhanced processing with better progress tracking and UI feedback"""
-    st.markdown("### 🔄 Processing Results")
+    st.markdown("### 🔄 Processing Video")
+    
+    # Create a more detailed progress tracking system
+    progress_placeholder = st.empty()
+    status_placeholder = st.empty()
+    result_placeholder = st.empty()
     
     try:
-        # Main progress bar
-        progress_bar = st.progress(0)
+        # Initialize progress and payload
+        progress_bar = progress_placeholder.progress(0)
+        status_placeholder.markdown("⏳ Initializing process...")
+        payload_for_cobot_client = {}
         
-        # Results container
-        results_container = st.container()
+        # Load payload
+        with st.spinner("📋 Loading configuration..."):
+            with open("payload.json", "r") as file:
+                payload = json.load(file)
+            progress_bar.progress(15)
+            status_placeholder.markdown("✅ Configuration loaded")
         
-        with results_container:
-            # Status section
-            st.markdown("#### 📊 Process Status")
-            status_col1, status_col2 = st.columns(2)
-            current_status = status_col1.empty()
-            current_step = status_col2.empty()
-            current_status.markdown("⏳ Process started")
+        # Upload and analyze
+        analyzer = VideoAnalyzer(payload=payload)
+        with st.spinner("☁️ Uploading to cloud..."):
+            gcp_url = analyzer.upload_video_to_bucket("test1.mp4", video_path)
+            progress_bar.progress(30)
+            status_placeholder.markdown("✅ Video uploaded to cloud")
+        
+        # Get annotations
+        with st.spinner("🔍 Analyzing video content..."):
+            annotations = analyzer.get_ellm_response()
+            if annotations:
+                with result_placeholder.expander("📊 View Analysis Results", expanded=True):
+                    st.json(annotations)
+            progress_bar.progress(45)
+            status_placeholder.markdown("✅ Analysis complete")
+        
+        rlef_uploader = VideoUploader()
+        # Upload to RLEF
+        with st.spinner("📤 Uploading results to RLEF..."):
+            status, rlef_response_text = rlef_uploader.upload_to_rlef(
+                rlef_url="https://autoai-backend-exjsxe2nda-uc.a.run.app/resource/",
+                video_filepath=video_path,
+                video_annotations=annotations,
+                csv_filepath=None
+            )
+            progress_bar.progress(60)
+            if status == 200:
+                status_placeholder.markdown("✅ Results uploaded to RLEF")
+            else:
+                st.warning("⚠️ There are issues with RLEF upload")
+
+        # Process coordinates and HAMER predictions
+        with st.spinner("📍 Processing coordinates and generating predictions..."):
+            recording_dir = 'recordings/Recorded_Demo'
+            rgb_zip_path = f'{recording_dir}/archives/rgb_images_data_collection.zip'
+            depth_zip_path = f'{recording_dir}/archives/depth_images_data_collection.zip'
             
-            # Results tabs
-            tabs = st.tabs(["Analysis Results", "Coordinate Data", "Processing Log"])
+            # Get coordinates
+            detector = ObjectDetector(api_key=GEMINI_API_KEY, recording_dir=recording_dir)
+            response_coordinates = detector.get_real_world_coordinates(annotations)
             
-            with tabs[0]:
-                analysis_placeholder = st.empty()
-            with tabs[1]:
-                coordinates_placeholder = st.empty()
-            with tabs[2]:
-                log_placeholder = st.empty()
-                log_text = []
+            if response_coordinates:
+                with result_placeholder.expander("🎯 Coordinate Results", expanded=True):
+                    st.json(response_coordinates)
             
-            # Load payload
-            with st.spinner("📋 Loading configuration..."):
-                with open("payload.json", "r") as file:
-                    payload = json.load(file)
-                progress_bar.progress(20)
-                current_status.markdown("✅ Configuration loaded")
-                log_text.append("Configuration loaded successfully")
-                log_placeholder.code('\n'.join(log_text))
+            progress_bar.progress(75)
+            status_placeholder.markdown("✅ Coordinates processed")
             
-            # Upload and analyze
-            with st.spinner("☁️ Uploading to cloud..."):
-                analyzer = VideoAnalyzer(payload=payload)
-                gcp_url = analyzer.upload_video_to_bucket("test1.mp4", video_path)
-                progress_bar.progress(40)
-                current_status.markdown("✅ Video uploaded to cloud")
-                log_text.append(f"Video uploaded to GCP: {gcp_url}")
-                log_placeholder.code('\n'.join(log_text))
+            # Prepare payload for cobot client
+            payload_for_cobot_client["fundamental_actions"] = {
+                key: {
+                    **value,
+                    "coordinates": value["coordinates"].tolist() if isinstance(value["coordinates"], np.ndarray) else value["coordinates"]
+                }
+                for key, value in response_coordinates.items()
+            }
+            payload_for_cobot_client["rlef_resource_id"] = rlef_response_text['_id']
+            payload_for_cobot_client["video_gcp_url"] = gcp_url
             
-            # Get annotations
-            with st.spinner("🔍 Analyzing video content..."):
-                annotations = analyzer.get_ellm_response()
-                if annotations:
-                    progress_bar.progress(60)
-                    current_status.markdown("✅ Analysis complete")
-                    
-                    # Display analysis results
-                    analysis_placeholder.json(annotations)
-                    log_text.append("Video analysis completed")
-                    log_placeholder.code('\n'.join(log_text))
+            # Process HAMER predictions
+
+            try:
+                csv_hamer_output = process_images(rgb_zip_path, depth_zip_path)
+                with open(f"{recording_dir}/hamer_output/predictions_hamer.csv", "r") as file:
+                    csv_hamer_output = file.read()
+                payload_for_cobot_client["trajectory_csv"] = csv_hamer_output
+                status_placeholder.markdown("✅ HAMER predictions loaded")
+            except Exception as e:
+                st.warning(f"⚠️ Could not load HAMER predictions: {str(e)}")
+                payload_for_cobot_client["trajectory_csv"] = ""
             
-            # Upload to RLEF
-            with st.spinner("📤 Uploading results..."):
-                rlef_uploader = VideoUploader()
-                status, rlef_response_text = rlef_uploader.upload_to_rlef(
-                    rlef_url="https://autoai-backend-exjsxe2nda-uc.a.run.app/resource/",
-                    video_filepath=video_path,
-                    video_annotations=annotations,
-                    csv_filepath=None
-                )
-                
-                progress_bar.progress(80)
-                current_status.markdown("✅ Results uploaded")
-                log_text.append(f"Results uploaded to RLEF (Status: {status})")
-                log_placeholder.code('\n'.join(log_text))
+            progress_bar.progress(90)
+
+        # Send to Cobot Client
+        with st.spinner("🤖 Sending data to Cobot..."):
+            cobot_client = CobotClient(ip="192.168.0.149", port="8001")
+            cobot_client_status = cobot_client.send_trajectory_data(payload_for_cobot_client)
             
-            # Process coordinates
-            with st.spinner("📍 Processing coordinates..."):
-                recording_dir = 'recordings/Recorded_Demo'
-                detector = ObjectDetector(api_key=GEMINI_API_KEY, recording_dir=recording_dir)
-                response_coordinates = detector.get_real_world_coordinates(annotations)
-                
-                if response_coordinates:
-                    coordinates_placeholder.json(response_coordinates)
-                    log_text.append("Coordinate processing completed")
-                    log_placeholder.code('\n'.join(log_text))
-                
-                progress_bar.progress(100)
-                current_status.markdown("✅ Processing complete")
+            if cobot_client_status:
+                status_placeholder.markdown("✅ Data sent to Cobot successfully")
+                with result_placeholder.expander("🤖 Cobot Client Payload", expanded=False):
+                    st.json(payload_for_cobot_client)
+            else:
+                st.warning("⚠️ Cobot client response indicates potential issues")
             
-            # Final success message
-            st.success("🎉 All processing steps completed successfully!")
-            
-            # Summary metrics
-            st.markdown("#### 📈 Processing Summary")
-            metric_col1, metric_col2, metric_col3 = st.columns(3)
-            metric_col1.metric("Analysis Status", "Complete ✅")
-            metric_col2.metric("Coordinates Generated", len(response_coordinates) if response_coordinates else 0)
-            metric_col3.metric("Processing Time", f"{time.time():.2f}s")
+        with st.spinner("🤖 Updating the Trajectory in RLEF..."):
+            signed_url = get_signed_url(rlef_response_text['_id'], "predictions_hamer.csv")
+            if signed_url:
+                print(f"Signed URL: {signed_url}")
+                upload_hdf5_file(signed_url, f"{recording_dir}/hamer_output/predictions_hamer.csv")
+                status_placeholder.markdown("✅ Trajectory updated in RLEF")
+            else:
+                st.warning("⚠️ Failed to update trajectory in RLEF")
+            progress_bar.progress(100)
+        
+        st.success("🎉 All processing steps completed successfully!")
         
     except Exception as e:
         st.error(f"❌ Error during processing: {str(e)}")
-        log_text.append(f"ERROR: {str(e)}")
-        log_placeholder.code('\n'.join(log_text))
+        progress_placeholder.empty()
+        status_placeholder.empty()
 
 def main():
     """Enhanced main function with better UI organization"""
     st.set_page_config(
         page_title="Video Processing Platform",
         page_icon="🎥",
-        layout="wide"
+        layout="centered"
     )
     
     initialize_session_state()

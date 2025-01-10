@@ -42,7 +42,7 @@ def get_base64_encoded_hamer_response(rgb_zip_path, depth_zip_path, url_endpoint
         print(f"Error: {str(e)}")
         return response_encoded
 
-def process_images(rgb_zip_path, depth_zip_path, url_endpoint= "http://techolution.ddns.net:5000/process_pose", output_dir = "hamer_output"):
+def process_images(rgb_zip_path, depth_zip_path, url_endpoint= "http://techolution.ddns.net:5000/process_pose", output_dir = "recordings/Recorded_Demo/hamer_output"):
        response_encoded = None
        response_encoded = get_base64_encoded_hamer_response(rgb_zip_path, depth_zip_path, url_endpoint)
        decoded_response = base64_to_csv(response_encoded, f'{output_dir}/predictions_hamer.csv')
@@ -106,7 +106,7 @@ calib_matrix_y = np.array([
       [ 0.0,    0.0,     0.0,    1.0    ]
     ])
 
-
+# RLEF UTILS:
 def convert_video(input_path, output_path):
     # Create a temporary file
     temp_output_path = tempfile.mktemp(suffix='.mp4')
@@ -122,6 +122,38 @@ def convert_video(input_path, output_path):
         shutil.move(temp_output_path, output_path)
     else:
         print("Conversion failed.")
+
+
+# Function to get the signed URL from the RLEF API
+def get_signed_url(resource_id, hdf5_filename):
+    url = "https://autoai-backend-exjsxe2nda-uc.a.run.app/resource/uploadHdf5File"
+    form_data = {
+        "resourceId": resource_id,
+        "hdf5FileName": hdf5_filename
+    }
+    response = requests.put(url, data=form_data)
+    
+    if response.status_code == 200:
+        try:
+            response_dict = response.json()
+            return response_dict.get("hdf5FileSignedUrlForUpload")
+        except json.JSONDecodeError:
+            print("Error: Response is not valid JSON.")
+            return None
+    else:
+        print(f"Failed to get signed URL. Status code: {response.status_code}")
+        return None
+
+# Function to upload the HDF5 file to the signed URL
+def upload_hdf5_file(signed_url, hdf5_filepath):
+    headers = {"Content-Type": "application/octet-stream"}
+    
+    with open(hdf5_filepath, 'rb') as file_data:
+        response = requests.put(signed_url, headers=headers, data=file_data)
+    
+    print(f"Status Code: {response.status_code}")
+    print(f"Response from the server: {response.text}")
+
 
 
 def deproject_pixel_to_point(depth_array, pixel_coords, intrinsics):
