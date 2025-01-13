@@ -6,7 +6,7 @@ __pycache__/
 *.mp4
 video_splitter.py
 *example.*
-recordings/
+recordings*/
 
 *.log
 *.jpg

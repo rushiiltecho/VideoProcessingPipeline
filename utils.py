@@ -146,7 +146,7 @@ def get_signed_url(resource_id, hdf5_filename):
 
 # Function to upload the HDF5 file to the signed URL
 def upload_hdf5_file(signed_url, hdf5_filepath):
-    headers = {"Content-Type": "application/octet-stream"}
+    headers = {"Content-Type": "text/csv"}
     
     with open(hdf5_filepath, 'rb') as file_data:
         response = requests.put(signed_url, headers=headers, data=file_data)
