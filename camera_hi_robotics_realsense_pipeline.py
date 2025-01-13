@@ -37,9 +37,15 @@ class RealSenseRecorder:
         self.frame_count = 0
         self.is_recording = False
         self.recording_stopped_callback = None
-
+        self.recording_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.frame_count = 0
+        
         # Recording Save Management
         self.output_dir = output_dir
+        # Create recording directory
+        recording_dir = os.path.join(self.output_dir, self.recording_id)
+        os.makedirs(recording_dir, exist_ok=True)
+        self.current_savepath = recording_dir
 
     def set_recording_stopped_callback(self, callback):
         """
@@ -224,9 +230,70 @@ class RealSenseRecorder:
         if self.frame_count % 30 == 0:
             self.h5_file.flush()
 
+    def capture_80_frames(self,):
+        """Capture frames from the camera and save them to the recording"""
+        try:
+            prev_time = time.time()
+            while True:
+                rgb_frame, depth_frame = self.camera.get_frames()
+                color_image = np.asanyarray(rgb_frame.get_data())
+                depth_image = np.asanyarray(depth_frame.get_data())
+
+                depth_colormap = self._normalize_depth_for_display(depth_image)
+                display_image = np.hstack((color_image, depth_colormap))
+                cv2.imshow("RGB-D Frame", display_image)
+
+                if self.is_recording:
+                    current_time = time.time()
+                    if current_time - prev_time >= 1.0 / 10:
+                        self._append_frames(rgb_frame, depth_frame)
+                        self.frame_count += 1
+
+                        # Save RGB image:
+                        rgb_path = f"{self.current_savepath}/rgb_images_data_collection/image_{self.frame_count}.jpg"
+                        cv2.imwrite(rgb_path, color_image)
+
+                        # Save depth image as .npy:
+                        depth_path = f"{self.current_savepath}/depth_images_data_collection/image_{self.frame_count}.npy"
+                        np.save(depth_path, depth_image)
+
+                        # Increment image counter and update last capture time
+                        print(f"Saved : {self.frame_count}")
+                        prev_time = current_time
+
+                if self.frame_count == 80:
+                    self.stop_recording()
+                    break
+
+                # Handle keyboard input
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('r'):
+                    if not self.is_recording:
+                        self.start_recording()
+                    else:
+                        self.stop_recording()
+                elif key == ord('c'):
+                    # Save RGB image:
+                    rgb_path = f"recordings/captured_frames/image_{self.frame_count}_{self.recording_id}.jpg"
+                    cv2.imwrite(rgb_path, color_image)
+
+                    # Save depth image as .npy:
+                    depth_path = f"recordings/captured_frames/image_{self.frame_count}_{self.recording_id}.npy"
+                    np.save(depth_path, depth_image)
+
+                    print(f"Saved frame {self.frame_count} as RGB and depth images.")
+                elif key == ord('q'):
+                    break
+                
+        finally:
+            self.stop_recording()
+            self.camera.release_camera()
+            cv2.destroyAllWindows()
+
     def capture_frames(self,):
         """Capture frames from the camera and save them to the recording"""
         try:
+            prev_time = time.time()
             while True:
                 rgb_frame, depth_frame = self.camera.get_frames()
                 color_image = np.asanyarray(rgb_frame.get_data())
@@ -239,13 +306,11 @@ class RealSenseRecorder:
                 cv2.imshow("RGB-D Frame", display_image)
 
                 if self.is_recording:
-                    prev_time = time.time()
-
-                    self._append_frames(rgb_frame, depth_frame)
-                    self.frame_count += 1
-                    
                     current_time = time.time()
-                    if current_time - prev_time < 1.0 / self.fps:
+                    if current_time - prev_time >= 1.0 / 10:
+                        self._append_frames(rgb_frame, depth_frame)
+                        self.frame_count += 1
+
                         # Save RGB image:
                         rgb_path = f"{self.current_savepath}/rgb_images_data_collection/image_{self.frame_count}.jpg"
                         cv2.imwrite(rgb_path, color_image)
@@ -322,7 +387,7 @@ def sample_function():
 if __name__ == "__main__": 
     camera = IntelRealSenseCamera()
     recorder = RealSenseRecorder(camera)
-    recorder.capture_frames()
+    recorder.capture_80_frames()
     print(recorder.get_current_savepath())
     print(recorder.get_current_recording())
     # camera.release_camera()

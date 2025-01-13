@@ -19,6 +19,8 @@ from vdeo_analysis_ellm_sudio import VideoAnalyzer
 from dsr_control_api.dsr_control_api.cobotclient import CobotClient
 
 output_path = None
+rec_name = 'Timed_Recording_7'
+recording_dir = f'recordings/{rec_name}'
 
 def initialize_session_state():
     """Initialize session state variables"""
@@ -50,7 +52,7 @@ def create_sidebar():
         
         mode = st.radio(
             "Select Operating Mode",
-            ("Live Video Feed", "Upload Video File"),
+            ("Live Video Feed", '8-Second Recording',"Upload Video File"),
             index=1,
             help="Choose how you want to input video data"
         )
@@ -102,7 +104,7 @@ def handle_live_feed():
         
         # Enhanced UI Controls
         st.markdown("### 🎮 Controls")
-        controls_col1, controls_col2, controls_col3 = st.columns(3)
+        controls_col1, controls_col2, controls_col3, controls_col4 = st.columns(4)
         
         with controls_col1:
             if st.button("🟢 Start Recording", use_container_width=True, 
@@ -118,9 +120,35 @@ def handle_live_feed():
                         disabled=not st.session_state.get("recording_status", False)):
                 st.session_state["recording_status"] = False
                 recorder.stop_recording()
-                st.info(f"✅ Captured {recorder.frame_count} frames")
+                st.info(f"✅ Captured frames")
         
         with controls_col3:
+            if st.button("📸 Capture Frame", use_container_width=True):
+                # Show waiting message
+                wait_message = st.empty()
+                wait_message.info("⏳ Waiting for camera to stabilize...")
+                
+                # Wait for 1 second
+                time.sleep(1.0)
+                
+                # Capture frames
+                rgb_frame, depth_frame = camera.get_frames()
+                color_image = np.asanyarray(rgb_frame.get_data())
+                depth_image = np.asanyarray(depth_frame.get_data())
+                
+                # Clear the waiting message
+                wait_message.empty()
+                
+                # Create a 'captured_frames' directory if it doesn't exist
+                capture_dir = os.path.join(recorder.current_savepath or "recordings/captured_frames")
+                os.makedirs(capture_dir, exist_ok=True)
+                
+                # Save the frames
+                cv2.imwrite(os.path.join(recording_dir, "captured_frame.jpg"), color_image)
+                np.save(os.path.join(recording_dir, "captured_frame.npy"), depth_image)
+                st.success("✅ Frame captured and saved!")
+        
+        with controls_col4:
             if st.button("⏹️ Quit", use_container_width=True):
                 if recorder and recorder.is_recording:
                     recorder.stop_recording()
@@ -194,6 +222,168 @@ def handle_live_feed():
                 
         st.session_state["run"] = False
 
+
+def handle_timed_recording(duration=10):
+    """Handle timed recording with automatic stop after specified duration"""
+    st.subheader("⏲️ Timed Video Recording")
+    
+    recorder = None
+    camera = None
+    
+    try:
+        with st.spinner("🎥 Initializing camera..."):
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    camera = IntelRealSenseCamera()
+                    recorder = RealSenseRecorder(camera=camera)
+                    break
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        time.sleep(2)
+                    else:
+                        raise e
+        
+        if not recorder:
+            st.error("❌ Failed to initialize camera after multiple attempts")
+            return
+        
+        # Enhanced UI Controls
+        st.markdown("### 🎮 Controls")
+        controls_col1, controls_col2, controls_col3 = st.columns(3)
+        
+        # Initialize timer state
+        if "start_time" not in st.session_state:
+            st.session_state.start_time = None
+        
+        with controls_col1:
+            if st.button("🟢 Start Timed Recording", use_container_width=True, 
+                        disabled=st.session_state.get("recording_status", False)):
+                st.session_state["recording_status"] = True
+                st.session_state.start_time = time.time()
+                recorder.start_recording(rec_name)
+                st.success(f"📝 Recording to: {recorder.get_current_savepath()}")
+                global output_path
+                output_path = recorder.get_current_savepath()
+        
+        with controls_col2:
+            if st.button("⏹️ Stop Early", use_container_width=True,
+                        disabled=not st.session_state.get("recording_status", False)):
+                st.session_state["recording_status"] = False
+                st.session_state.start_time = None
+                recorder.stop_recording()
+                st.info(f"✅ Recording stopped manually")
+                st.session_state["run"] = False
+                st.rerun()
+        
+        with controls_col3:
+            if st.button("📸 Capture Frame", use_container_width=True):
+                # Show waiting message
+                os.makedirs(f'{recording_dir}', exist_ok=True)
+                wait_message = st.empty()
+                wait_message.info("⏳ Waiting for camera to stabilize...")
+                
+                # Wait for 1 second
+                time.sleep(1.0)
+                
+                # Capture frames
+                rgb_frame, depth_frame = camera.get_frames()
+                color_image = np.asanyarray(rgb_frame.get_data())
+                depth_image = np.asanyarray(depth_frame.get_data())
+                
+                # Clear the waiting message
+                wait_message.empty()
+                
+                # Save the frames
+                cv2.imwrite(os.path.join(recording_dir, "captured_frame.jpg"), color_image)
+                np.save(os.path.join(recording_dir, "captured_frame.npy"), depth_image)
+                st.success("✅ Frame captured and saved!")
+        
+        # Status indicators and timer
+        status_col1, status_col2 = st.columns(2)
+        timer_placeholder = st.empty()
+        
+        with status_col1:
+            st.metric("Recording Status", 
+                     "Active 🟢" if st.session_state.get("recording_status", False) else "Inactive 🔴")
+        with status_col2:
+            if st.session_state.get("recording_status", False):
+                st.metric("Frames Captured", recorder.frame_count if recorder else 0)
+        
+        # Display frames with enhanced layout
+        st.markdown("### 📺 Live Preview")
+        frame_placeholder = st.empty()
+        
+        interval = 1/10  # seconds between frames
+        last_capture_time = time.time()
+        while st.session_state.get("run", True):
+            try:
+                current_time = time.time()
+                
+                # Update timer display
+                if st.session_state.get("recording_status", False) and st.session_state.start_time is not None:
+                    elapsed_time = current_time - st.session_state.start_time
+                    remaining_time = max(0, duration - elapsed_time)
+                    timer_placeholder.markdown(f"### ⏱️ Time Remaining: {remaining_time:.1f} seconds")
+                    
+                    # Check if recording should stop
+                    if elapsed_time >= duration:
+                        st.session_state["recording_status"] = False
+                        st.session_state.start_time = None
+                        recorder.stop_recording()
+                        st.success(f"✅ Recording completed after {duration} seconds!")
+                        st.session_state["run"] = False
+                        st.rerun()
+                        break
+                
+                rgb_frame, depth_frame = camera.get_frames()
+                color_image = np.asanyarray(rgb_frame.get_data())
+                depth_image = np.asanyarray(depth_frame.get_data())
+                
+                depth_colormap = recorder._normalize_depth_for_display(depth_image)
+                display_image = np.hstack((color_image, depth_colormap))
+                display_image = cv2.cvtColor(display_image, cv2.COLOR_BGR2RGB)
+                
+                frame_placeholder.image(display_image, channels="RGB", use_container_width=True,
+                                    caption="Live Feed (Color + Depth)")
+                
+                if st.session_state.get("recording_status", False) and (current_time - last_capture_time >= interval) and recorder.frame_count <= 80:
+                    recorder._append_frames(rgb_frame, depth_frame)
+                    recorder.frame_count += 1
+
+                    with st.spinner("Saving frames..."):
+                        rgb_path = f"{recorder.current_savepath}/rgb_images_data_collection/image_{recorder.frame_count}.jpg"
+                        cv2.imwrite(rgb_path, color_image)
+
+                        depth_path = f"{recorder.current_savepath}/depth_images_data_collection/image_{recorder.frame_count}.npy"
+                        np.save(depth_path, depth_image)
+
+                    last_capture_time = current_time
+                    
+            except Exception as e:
+                st.error(f"❌ Frame capture error: {str(e)}")
+                break
+                
+    except Exception as e:
+        st.error(f"❌ Camera initialization failed: {str(e)}")
+        return
+        
+    finally:
+        if recorder and recorder.is_recording:
+            try:
+                recorder.stop_recording()
+            except Exception as e:
+                st.error(f"❌ Cleanup error: {str(e)}")
+        
+        if camera:
+            try:
+                camera.release_camera()
+            except Exception as e:
+                st.error(f"❌ Camera release error: {str(e)}")
+                
+        st.session_state["run"] = False
+
+
 def handle_uploaded_file():
     """Enhanced file upload handling with better UI/UX"""
     st.subheader("📤 Upload and Process Video")
@@ -245,6 +435,7 @@ def handle_uploaded_file():
     if analyze_video:
         if st.button("🚀 Start Analysis", use_container_width=True):
             process_saved_recording(video_path)
+
 
 def process_saved_recording(video_path):
     """Enhanced processing with better progress tracking and UI feedback"""
@@ -330,7 +521,7 @@ def process_saved_recording(video_path):
             # Process HAMER predictions
 
             try:
-                csv_hamer_output = process_images(rgb_zip_path, depth_zip_path)
+                # csv_hamer_output = process_images(rgb_zip_path, depth_zip_path)
                 with open(f"{recording_dir}/hamer_output/predictions_hamer.csv", "r") as file:
                     csv_hamer_output = file.read()
                 payload_for_cobot_client["trajectory_csv"] = csv_hamer_output
@@ -384,9 +575,10 @@ def main():
     
     if mode == "Live Video Feed":
         handle_live_feed()
+    elif mode == "8-Second Recording":
+        handle_timed_recording()
     else:
         handle_uploaded_file()
-
 if __name__ == "__main__":
     try:
         main()
