@@ -158,6 +158,7 @@ def upload_hdf5_file(signed_url, hdf5_filepath):
 
 def deproject_pixel_to_point(depth_array, pixel_coords, intrinsics):
     """Deproject pixel coordinates and depth to 3D point using RealSense intrinsics."""
+    # print(f'DEPTH ARRAY: {depth_array}')
     x, y = int(pixel_coords[0]), int(pixel_coords[1])
     if x < 0 or x >= depth_array.shape[1] or y < 0 or y >= depth_array.shape[0]:
         return np.array([0, 0, 0])
@@ -171,7 +172,8 @@ def deproject_pixel_to_point(depth_array, pixel_coords, intrinsics):
 
 def get_intrinsics(metadata_filepath: str):
     config = load_config()
-    camera_intrinsics = config['camera_intrinsics']
+    print(f"CONFIG\n{config}")
+    camera_intrinsics = config['camera_config']['camera_intrinsics']
     color_intrinsics = camera_intrinsics['color_intrinsics']
     depth_intrinsics = camera_intrinsics['depth_intrinsics']
     return color_intrinsics, depth_intrinsics
@@ -260,6 +262,46 @@ def get_pixel_3d_coordinates(recording_dir, time_seconds, pixel_x, pixel_y):
         return None, time_seconds
 
 
+def get_real_world_coordinates(image_path=None, im=None, pixel_x=0, pixel_y=0):
+    """
+    Get the real world coordinates (X, Y, Z) of a specific pixel in a depth image.
+
+    Args:
+        image_dir (str): Path to the directory containing the depth image.
+        pixel_x (int): X coordinate of the pixel.
+        pixel_y (int): Y coordinate of the pixel.
+
+    Returns:
+        np.array: Real world coordinates (X, Y, Z) in meters.
+    """
+    # Load the depth image
+    # depth_image_path = os.path.join(f'{image_dir}/depth_image', "depth_image.npy")
+    if image_path is not None:
+        depth_image_path = f'{image_path}'
+        depth_image = np.load(depth_image_path)
+    elif im is not None:
+        depth_image = im
+        # print(f"TYPE OF DEPTH IMAGE: {type(depth_image)}")
+    else:
+        raise ValueError("Depth image not found")
+
+    # Load the camera intrinsics
+    intrinsics = rs.intrinsics()
+    color_intrinsics, depth_intrinsics = get_intrinsics("config/config.yaml")
+    intrinsics.width = 640
+    intrinsics.height = 480
+    intrinsics.ppx = depth_intrinsics['ppx']
+    intrinsics.ppy = depth_intrinsics['ppy']
+    intrinsics.fx = depth_intrinsics['fx']
+    intrinsics.fy = depth_intrinsics['fy']
+    intrinsics.model = rs.distortion.inverse_brown_conrady
+    intrinsics.coeffs = [0, 0, 0, 0, 0]
+
+    # Deproject the pixel to 3D point
+    point_3d = deproject_pixel_to_point(depth_image, (pixel_x, pixel_y), intrinsics)
+    return point_3d
+
+
 def _transform_coordinates(point_xyz, calib_matrix_x=calib_matrix_x, calib_matrix_y=calib_matrix_y):
     """
     Transform point through both calibration matrices
@@ -291,6 +333,24 @@ def _transform_coordinates(point_xyz, calib_matrix_x=calib_matrix_x, calib_matri
     return [float(transformed_y[0]), float(transformed_y[1]), float(transformed_y[2])]
 
 
+def ___transform_coordinates(point):
+    """Transform coordinates using X and Y matrices."""
+    B = np.eye(4)
+    B[:3, 3] = point
+    A = calib_matrix_y @ B @ np.linalg.inv(calib_matrix_x)
+    transformed_point = A[:3, 3] * 1000
+    return transformed_point/1000
+
+
+def transform_coordinates(point):
+    """Transforms coordinates from input space to cobot base."""
+    B = np.eye(4)
+    B[:3, 3] = [point[0] / 1000, point[1] / 1000, point[2] / 1000]  # Convert to meters
+    A = calib_matrix_y @ B @ np.linalg.inv(calib_matrix_x)
+    transformed = A[:3, 3] * 1000  # Convert back to mm
+    return [float(transformed_) for transformed_ in transformed]
+
+
 # =================== PARSING UTILS ===================
 def parse_to_json(response):
     pattern = r"```json\s*(\{.*\})"
@@ -303,15 +363,6 @@ def parse_to_json(response):
     
     return json_content
     
-
-def transform_coordinates(point):
-    """Transform coordinates using X and Y matrices."""
-    B = np.eye(4)
-    B[:3, 3] = point
-    A = calib_matrix_y @ B @ np.linalg.inv(calib_matrix_x)
-    transformed_point = A[:3, 3] * 1000
-    return transformed_point/1000
-
 
 def parse_list_boxes(text:str):
   result = []

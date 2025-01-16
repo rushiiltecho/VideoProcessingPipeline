@@ -58,6 +58,7 @@ class VideoUploader:
 
     def generate_video_annotations(self, video_annotations):
         video_annotations_list = []
+        print(video_annotations)
         try:
             for i in video_annotations.keys():
                 if isinstance(video_annotations[i], list) and all(isinstance(item, dict) for item in video_annotations[i]):

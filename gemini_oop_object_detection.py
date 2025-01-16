@@ -11,7 +11,6 @@ import os
 import torch 
 
 from utils import convert_time_to_seconds, get_pixel_3d_coordinates, normalize_box, plot_bounding_boxes, transform_coordinates
-from vdeo_analysis_ellm_sudio import VideoAnalyzer
 
 class ObjectDetector:
     """A class to handle object detection using Google's Gemini model."""
@@ -36,25 +35,23 @@ class ObjectDetector:
         self.recording_dir = Path(recording_dir)
         self.video_path = self.recording_dir / "color.mp4"
 
-        # Open video to get properties
-        self.cap = cv2.VideoCapture(str(self.video_path))
-        if not self.cap.isOpened():
-            raise RuntimeError(f"Could not open video file: {self.video_path}")
+        if self.video_path.exists():
+            # Open video to get properties
+            self.cap = cv2.VideoCapture(str(self.video_path))
+            if not self.cap.isOpened():
+                raise RuntimeError(f"Could not open video file: {self.video_path}")
+                
+            self.fps = self.cap.get(cv2.CAP_PROP_FPS)
+            self.frame_count = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            self.duration = self.frame_count / self.fps
             
-        self.fps = self.cap.get(cv2.CAP_PROP_FPS)
-        self.frame_count = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        self.duration = self.frame_count / self.fps
-        
-        print(f"Video properties:")
-        print(f"- Duration: {self.duration:.2f} seconds")
-        print(f"- Frame count: {self.frame_count}")
-        print(f"- FPS: {self.fps}")
-        
-        self.cap.release()
-
-        
-        if not self.video_path.exists():
-            raise FileNotFoundError(f"Video file not found: {self.video_path}")
+            print(f"Video properties:")
+            print(f"- Duration: {self.duration:.2f} seconds")
+            print(f"- Frame count: {self.frame_count}")
+            print(f"- FPS: {self.fps}")
+            self.cap.release()
+            if not self.video_path.exists():
+                raise FileNotFoundError(f"Video file not found: {self.video_path}")
         
     # TODO: return a PIL image
     def get_frame_at_time(self, time_seconds) -> Image.Image:
@@ -200,7 +197,7 @@ class ObjectDetector:
             return None
         return {i: normalize_box(j) for i, j in self.boxes.items()}
     
-    def get_object_center(self, im:Image, target_class):
+    def get_object_center(self, im:Image, target_class:str):
         """
         Get the center of the detected object.
         
@@ -219,7 +216,7 @@ class ObjectDetector:
             return None, None, None, None
             
         boxes = self.get_real_boxes()
-        self.visualize_detections(im, unscaled_boxes, self.recording_dir)
+        # self.visualize_detections(im, unscaled_boxes, self.recording_dir)
         
         if target_class not in boxes:
             print(f"Target class {target_class} not found in detected boxes")
@@ -234,6 +231,46 @@ class ObjectDetector:
         center_y = int((box[1] + box[3]) / 2)
         
         return center_x, center_y, box, confidence
+
+
+    def get_object_centers(self, im: Image, target_classes: List[str]) -> Dict[str, Tuple[Optional[int], Optional[int], Optional[np.ndarray], Optional[float]]]:
+        """
+        Get the centers of the detected objects for the given target classes.
+        
+        Args:
+            im: PIL Image
+            target_classes (List[str]): List of object classes to detect
+                
+        Returns:
+            Dict[str, Tuple[Optional[int], Optional[int], Optional[np.ndarray], Optional[float]]]: 
+                Dictionary with target class as key and tuple of center coordinates, bounding box, confidence score as value. 
+                All None if detection fails for a class.
+        """
+        centers = {}
+        unscaled_boxes = self.detect_objects(image=im, target_class=target_classes) 
+        print("visualizing detections")
+        self.visualize_detections(im, unscaled_boxes, self.recording_dir)
+        boxes = self.get_real_boxes()
+        print(f"Boxes: {boxes}")
+        for target_class in target_classes:
+            # Detect object
+            if len(unscaled_boxes) == 0 or target_class not in boxes:  # If detection fails
+                print(f"No objects detected or target class {target_class} not found in detected boxes")
+                centers[target_class] = (None, None, None, None)
+                continue
+            
+            # Get bounding box and confidence score
+            box = boxes[target_class]
+            confidence = 100
+            
+            # Calculate center coordinates
+            center_x = int((box[0] + box[2]) / 2)
+            center_y = int((box[1] + box[3]) / 2)
+            
+            centers[target_class] = ([center_x, center_y], box, confidence)
+            print(centers)
+        return centers
+
 
     def get_object_3d_coordinates(self, time_seconds, target_class):
         """
@@ -278,7 +315,7 @@ class ObjectDetector:
         classes_to_detect = response['objects']
         actions = list(response.keys())[2:]
         ret_response = {}
-        
+        print(actions)
         # Get 3D coordinates of everything and store in a dictionary
         for action in actions:
             result = {}
@@ -293,8 +330,11 @@ class ObjectDetector:
                     
                     # Get frame and detect object
                     frame = self.get_frame_at_time(time_seconds)
+                    print(f'======== FRAME ======== \n{frame}')
                     center_x, center_y, box, confidence = self.get_object_center(im=frame, target_class=object_name)
-                    
+                    print(f'======== CENTER_X ======== \n{center_x}')
+                    print(f'======== CENTER_Y ======== \n{center_y}')
+                    print(f'======== BOX ======== \n{box}')
                     if center_x is None or center_y is None:
                         print(f"Warning: Could not detect {object_name} at time {start_time}")
                         continue
@@ -338,20 +378,6 @@ class ObjectDetector:
         return ret_response
 
 
-def ellm_studio_test(recording_dir:str):
-    payload = None
-
-    # Load the payload from a JSON file
-    with open("payload.json", "r") as file:
-        payload = json.load(file)
-
-    print(f"================ PAYLOAD ================ +\n{payload['question']}\n================ PAYLOAD ================")
-    analyzer = VideoAnalyzer(payload=payload)
-    # gcp_url = analyzer.upload_video_to_bucket("test1.mp4", f'{recording_dir}/color.mp4')
-    response = analyzer.get_gemini_response(payload['question'])
-    # print(response)
-    return response
-
 
 def demo_flow(recording_dir, response_annotations):
     print(f"Recording directory: {recording_dir}")
@@ -365,7 +391,6 @@ def demo_flow(recording_dir, response_annotations):
 # Example usage:
 if __name__ == "__main__":
     recording_dir = 'recordings/Demo_Recording'
-    response = ellm_studio_test(recording_dir=recording_dir)
     # print(response)
     # classes_to_detect = response['objects']
     # TODO: Modify Prompt: get actions in agent response as a separate field to use differently, just like objects
@@ -391,10 +416,6 @@ if __name__ == "__main__":
 
     # print(coords)
 # =======================================================
-
-    response_for_whole_video = detector.get_real_world_coordinates(response)
-    print(f'RESPONSE FOR WHOLE VIDEO:\n================ \n{ response_for_whole_video } \n================')
-
 
 
 

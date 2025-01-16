@@ -8,18 +8,19 @@ import os
 import cv2
 import numpy as np
 import time
+from PIL import Image
 
 from gemini_constant_api_key import GEMINI_API_KEY
 from gemini_oop_object_detection import ObjectDetector, demo_flow
 from lit_demo_flow import RealSenseManager
 from camera_hi_robotics_realsense_pipeline import RealSenseRecorder
 from rlef_video_annotation import VideoUploader
-from utils import convert_video, get_signed_url, process_images, upload_hdf5_file
+from utils import convert_video, get_real_world_coordinates, get_signed_url, process_images, transform_coordinates, upload_hdf5_file
 from vdeo_analysis_ellm_sudio import VideoAnalyzer
 from dsr_control_api.dsr_control_api.cobotclient import CobotClient
 
 output_path = None
-rec_name = 'Timed_Recording_7'
+rec_name = 'Recorded_Demo'
 recording_dir = f'recordings/{rec_name}'
 
 def initialize_session_state():
@@ -52,8 +53,8 @@ def create_sidebar():
         
         mode = st.radio(
             "Select Operating Mode",
-            ("Live Video Feed", '8-Second Recording',"Upload Video File"),
-            index=1,
+            ("Live Video Feed", '8-Second Recording',"Upload Video File", "Run Inference"),
+            index=2,
             help="Choose how you want to input video data"
         )
         
@@ -62,6 +63,7 @@ def create_sidebar():
         st.success("System Ready")
         
         return mode
+
 
 def create_header():
     """Create an attractive header section"""
@@ -76,6 +78,97 @@ def create_header():
         Record, analyze, and process video data with ease
     </p>
     """, unsafe_allow_html=True)
+
+
+def handle_run_inference():
+    # camera initialization to capture the latest frame
+    camera = None
+    recorder = None
+    try:
+        with st.spinner("🎥 Initializing camera..."):
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    camera = IntelRealSenseCamera()
+                    recorder = RealSenseRecorder(camera=camera)
+                    break
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        time.sleep(2)
+                    else:
+                        raise e
+
+        # Enhanced UI Controls
+        st.markdown("### 🎮 Controls")
+        controls_col2 = st.columns(3)[1]
+        image_0 = 'image_0'
+        with controls_col2:
+            if st.button("📸 Capture Frame", use_container_width=True):
+                # Show waiting message
+                wait_message = st.empty()
+                wait_message.info("⏳ Waiting for camera to stabilize...")
+
+                # Wait for 1 second
+                time.sleep(1.0)
+
+                # Capture frames
+                rgb_frame, depth_frame = camera.get_frames()
+                color_image = np.asarray(rgb_frame.get_data())
+                depth_image = np.asarray(depth_frame.get_data())
+
+                # Clear the waiting message
+                wait_message.empty()
+                recorder.set_current_savepath(f'{recording_dir}')
+                # Create a 'captured_frames' directory if it doesn't exist
+                capture_dir = f'{recorder.current_savepath}/captured_frames'
+                os.makedirs(capture_dir, exist_ok=True)
+
+                # Save the frames
+                cv2.imwrite(os.path.join(capture_dir, f"{image_0}.jpg"), color_image)
+                np.save(os.path.join(capture_dir, f"{image_0}.npy"), depth_image)
+                st.success("✅ Frame captured and saved!")
+
+                # PLACEHOLDER for inference script
+                if st.button("Get Model Output", use_container_width=True):
+                    take_images_with_classes_for_inference(depth_im=depth_image, rgb_im=color_image)
+
+                # PLACEHOLDER for sending the trajectory alongwith the realworld coordinates to cobot client
+
+
+        # Display frames with enhanced layout
+        st.markdown("### 📺 Live Preview")
+        frame_placeholder = st.empty()
+
+        while st.session_state.get("run_inference", True):
+            rgb_frame, depth_frame = camera.get_frames()
+            color_image = np.asarray(rgb_frame.get_data())
+            depth_image = np.asarray(depth_frame.get_data())
+
+            depth_colormap = recorder._normalize_depth_for_display(depth_image)
+            display_image = np.hstack((color_image, depth_colormap))
+            display_image = cv2.cvtColor(display_image, cv2.COLOR_BGR2RGB)
+
+            frame_placeholder.image(display_image, channels="RGB", use_container_width=True, caption="Live Feed (Color + Depth)")
+
+    except Exception as e:
+        st.error(f"❌ Camera initialization failed: {str(e)}")
+        return
+
+    finally:
+        if recorder and recorder.is_recording:
+            try:
+                recorder.stop_recording()
+            except Exception as e:
+                st.error(f"❌ Cleanup error: {str(e)}")
+
+        if camera:
+            try:
+                camera.release_camera()
+            except Exception as e:
+                st.error(f"❌ Camera release error: {str(e)}")
+
+        st.session_state["run"] = False
+
 
 def handle_live_feed():
     """Enhanced live feed handling with better UI feedback"""
@@ -140,7 +233,8 @@ def handle_live_feed():
                 wait_message.empty()
                 
                 # Create a 'captured_frames' directory if it doesn't exist
-                capture_dir = os.path.join(recorder.current_savepath or "recordings/captured_frames")
+                capture_dir = f'{recorder.current_savepath}/captured_frames'
+                # capture_dir = os.path.join(recorder.current_savepath or "recordings/captured_frames")
                 os.makedirs(capture_dir, exist_ok=True)
                 
                 # Save the frames
@@ -384,7 +478,7 @@ def handle_timed_recording(duration=10):
         st.session_state["run"] = False
 
 
-def handle_uploaded_file():
+def __handle_uploaded_file():
     """Enhanced file upload handling with better UI/UX"""
     st.subheader("📤 Upload and Process Video")
     
@@ -437,6 +531,56 @@ def handle_uploaded_file():
             process_saved_recording(video_path)
 
 
+def handle_uploaded_file():
+    """Enhanced file upload handling with better UI/UX"""
+    st.subheader("📤 Upload and Process Video")
+    
+    uploaded_file = st.file_uploader(
+        "Drop your video file here",
+        type=["mp4", "avi", "mkv"],
+        help="Supported formats: MP4, AVI, MKV"
+    )
+    
+    if not uploaded_file:
+        st.info("👆 Please upload a video file to continue")
+        return
+
+    with st.spinner("📝 Processing uploaded file..."):
+        tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+        tfile.write(uploaded_file.read())
+        original_path = f"{os.path.abspath(uploaded_file.name)}/recordings"
+        upload_directory = os.path.dirname(original_path)
+        video_path = tfile.name
+        
+        convert_video(video_path, video_path)
+    
+    st.success("✅ Video processed successfully")
+    
+    # Video preview
+    st.markdown("### 🎬 Video Preview")
+    st.video(video_path)
+    
+    # Analysis section
+    st.markdown("### 🔍 Analysis Options")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        analyze_video = st.checkbox(
+            "Run video analysis",
+            value=True,
+            help="Perform detailed analysis of the video content"
+        )
+        
+        if analyze_video:
+            if st.button("🚀 Start Analysis", use_container_width=True):
+                process_saved_recording(video_path)
+    
+    with col2:
+        if st.button("🎯 Run Inference", use_container_width=True):
+            st.session_state["run_inference"] = True
+            st.rerun()
+
+
 def process_saved_recording(video_path):
     """Enhanced processing with better progress tracking and UI feedback"""
     st.markdown("### 🔄 Processing Video")
@@ -468,7 +612,7 @@ def process_saved_recording(video_path):
         
         # Get annotations
         with st.spinner("🔍 Analyzing video content..."):
-            annotations = analyzer.get_ellm_response()
+            annotations = analyzer.get_gemini_response(gcp_url=gcp_url)
             if annotations:
                 with result_placeholder.expander("📊 View Analysis Results", expanded=True):
                     st.json(annotations)
@@ -561,6 +705,69 @@ def process_saved_recording(video_path):
         progress_placeholder.empty()
         status_placeholder.empty()
 
+
+def take_images_with_classes_for_inference(depth_imagepath = '/home/ai_hand/Downloads/main_flow_dec27_DEMO/recordings/Recorded_Demo/captured_frames/image_0.npy', rgb_imagepath = '/home/ai_hand/Downloads/main_flow_dec27_DEMO/recordings/Recorded_Demo/captured_frames/image_0.jpg', depth_im=None, rgb_im=None, object_classes=['soda can', 'white mug']):
+    """Run object detection inference using Gemini API"""
+    try:
+        if rgb_imagepath and depth_imagepath:
+            st.markdown("### 🔄 Running Object Detection")
+            status_placeholder = st.empty()
+            result_placeholder = st.empty()
+            rgb_im = Image.open(rgb_imagepath)
+            depth_im = np.load(depth_imagepath)
+        elif rgb_im is not None and depth_im is not None:
+            rgb_im = rgb_im
+            depth_im = depth_im
+        
+        else:
+            raise ValueError("Either depth_im and rgb_im or depth_imagepath and rgb_imagepath must be provided.")
+
+        with st.spinner("⏳ Getting info from the new scene..."):
+            # Initialize the detector
+            detector = ObjectDetector(api_key=GEMINI_API_KEY, recording_dir=recording_dir)
+            object_classes = object_classes if object_classes else ['soda can', 'white mug']
+            print(object_classes)
+            # if not annotations or 'objects' not in annotations:
+            #     st.error("❌ No objects detected in the video")
+            #     return
+            with st.spinner("🔍 Detecting object centers..."):
+                # Run object center detection
+                object_centers = detector.get_object_centers(rgb_im, object_classes[:2])
+                if object_centers:
+                    object_1_center = object_centers[object_classes[0]][0]
+                    object_2_center = object_centers[object_classes[1]][0]
+                    print("Object 1 center: ", object_1_center)
+                    print("Object 2 center: ", object_2_center)
+                    status_placeholder.markdown("✅ Object detection complete!")
+                    with result_placeholder.expander("📊 Object Detection Results", expanded=True):
+                        st.json(object_centers)
+                else:
+                    st.warning("⚠️ No object centers detected")
+            with st.spinner("🔍 Detecting object centers..."):
+                # Get real world coordinates of both the center points:
+                if object_1_center is not None and object_2_center is not None and np.any(object_1_center) and np.any(object_2_center):
+                    if depth_imagepath:
+                        object_1_rw_coords = transform_coordinates(get_real_world_coordinates(pixel_x=object_1_center[0], pixel_y=object_1_center[1], image_path=depth_imagepath))
+                        object_2_rw_coords = transform_coordinates(get_real_world_coordinates(pixel_x=object_2_center[0], pixel_y=object_2_center[1], image_path=depth_imagepath))
+                    else:
+                        object_1_rw_coords = transform_coordinates(get_real_world_coordinates(pixel_x=object_1_center[0], pixel_y=object_1_center[1], im=depth_im))
+                        object_2_rw_coords = transform_coordinates(get_real_world_coordinates(pixel_x=object_2_center[0], pixel_y=object_2_center[1], im=depth_im))
+                    with result_placeholder.expander("🌍 Real World Coordinates", expanded=False):
+                        st.json({
+                            object_classes[0]: [float(object_1_rw_coords_i) for object_1_rw_coords_i in object_1_rw_coords],
+                            object_classes[1]: [float(object_2_rw_coords_i) for object_2_rw_coords_i in object_2_rw_coords]
+                        })
+                else:
+                    st.warning("⚠️ Object centers are None")
+        # PLACEHOLDER for sending the realworld coordinates to the inference and feeding it to the model to generate a trajectory.
+            with st.spinner("Getting the inference from model"):
+                csv_file = "SAMPLE CSV"
+
+            # save the image file in reco
+        # Step 2: Send the received generated-trajectory to cobot client
+    except Exception as e:
+        st.error(f"❌ Error during object detection: {str(e)}")
+
 def main():
     """Enhanced main function with better UI organization"""
     st.set_page_config(
@@ -577,6 +784,8 @@ def main():
         handle_live_feed()
     elif mode == "8-Second Recording":
         handle_timed_recording()
+    elif mode == "Run Inference":
+        take_images_with_classes_for_inference()
     else:
         handle_uploaded_file()
 if __name__ == "__main__":
@@ -585,3 +794,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         st.session_state["run"] = False
         st.stop()
+

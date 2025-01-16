@@ -243,7 +243,7 @@ class VideoAnalyzer:
             ...
         }
         '''
-        prompt = f'''the video contains a demonstration of a hunman doing a task, can you name the task and also name the objects to track in the video and also the important timestamps of what actions are happening? divide it in based on action , picking it up , placing it, therefore i want output in a format or classified label , object name and timestamps in a list note : dont focus on robotic arm , only focus on other objects and human demonistrations
+        prompt = f'''the video contains a demonstration of a human doing a task, can you name the task and also name the objects to track in the video and also the important timestamps of what actions are happening? divide it in based on action , picking it up , placing it, therefore i want output in a format or classified label , object name and timestamps in a list note : dont focus on robotic arm , only focus on other objects and human demonstrations
         EXAMPLE OUTPUT FORMAT:
         {output_format}
         '''
