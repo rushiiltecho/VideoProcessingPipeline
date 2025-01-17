@@ -56,6 +56,42 @@ class VideoUploader:
 
         return response.status_code, processed_response
 
+
+    def upload_to_rlef_train(self, rlef_url ,video_filepath, video_annotations, model='678a262dc441e0b2c81a9686'):
+        self.video_annotations = video_annotations
+        self.video_filepath = video_filepath
+        converted_filepath = f'{self.video_filepath.split(".")[0]}.mp4'
+        self.convert_video(self.video_filepath, converted_filepath)
+
+        payload = {
+            'model': model,
+            'status': 'backlog',
+            'csv': 'self.bytes(csv_filepath)', #TODO: get the csv file as text here
+            'label': 'object_grab',
+            'tag': 'loaner boxes',
+            'prediction': 'predicted',
+            'confidence_score': '100',
+            'videoAnnotations': self.generate_video_annotations(video_annotations)
+        }
+
+        files = {
+            'resource': (converted_filepath, open(converted_filepath, 'rb'))
+        }
+
+        response = requests.post(
+            rlef_url , 
+            headers={},
+            data=payload,
+            files=files
+        )
+
+        print(f"RLEF RESPONSE STATUS: =========== {response.status_code}")
+        processed_response = json.loads(json_repair.repair_json(response.text))
+        # print(f"RLEF RESPONSE TEXT: =========== {processed_response}")
+
+        return response.status_code, processed_response
+
+
     def generate_video_annotations(self, video_annotations):
         video_annotations_list = []
         print(video_annotations)

@@ -2,6 +2,7 @@ from datetime import datetime
 import json
 import re
 from hi_robotics.vision_ai.cameras.intel_realsense_camera import IntelRealSenseCamera
+import pandas as pd
 import streamlit as st
 import tempfile
 import os
@@ -81,96 +82,6 @@ def create_header():
     """, unsafe_allow_html=True)
 
 
-def handle_run_inference():
-    # camera initialization to capture the latest frame
-    camera = None
-    recorder = None
-    try:
-        with st.spinner("🎥 Initializing camera..."):
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    camera = IntelRealSenseCamera()
-                    recorder = RealSenseRecorder(camera=camera)
-                    break
-                except Exception as e:
-                    if attempt < max_retries - 1:
-                        time.sleep(2)
-                    else:
-                        raise e
-
-        # Enhanced UI Controls
-        st.markdown("### 🎮 Controls")
-        controls_col2 = st.columns(3)[1]
-        image_0 = 'image_0'
-        with controls_col2:
-            if st.button("📸 Capture Frame", use_container_width=True):
-                # Show waiting message
-                wait_message = st.empty()
-                wait_message.info("⏳ Waiting for camera to stabilize...")
-
-                # Wait for 1 second
-                time.sleep(1.0)
-
-                # Capture frames
-                rgb_frame, depth_frame = camera.get_frames()
-                color_image = np.asarray(rgb_frame.get_data())
-                depth_image = np.asarray(depth_frame.get_data())
-
-                # Clear the waiting message
-                wait_message.empty()
-                recorder.set_current_savepath(f'{recording_dir}')
-                # Create a 'captured_frames' directory if it doesn't exist
-                capture_dir = f'{recorder.current_savepath}/captured_frames'
-                os.makedirs(capture_dir, exist_ok=True)
-
-                # Save the frames
-                cv2.imwrite(os.path.join(capture_dir, f"{image_0}.jpg"), color_image)
-                np.save(os.path.join(capture_dir, f"{image_0}.npy"), depth_image)
-                st.success("✅ Frame captured and saved!")
-
-                # PLACEHOLDER for inference script
-                if st.button("Get Model Output", use_container_width=True):
-                    take_images_with_classes_for_inference(depth_im=depth_image, rgb_im=color_image)
-
-                # PLACEHOLDER for sending the trajectory alongwith the realworld coordinates to cobot client
-
-
-        # Display frames with enhanced layout
-        st.markdown("### 📺 Live Preview")
-        frame_placeholder = st.empty()
-
-        while st.session_state.get("run_inference", True):
-            rgb_frame, depth_frame = camera.get_frames()
-            color_image = np.asarray(rgb_frame.get_data())
-            depth_image = np.asarray(depth_frame.get_data())
-
-            depth_colormap = recorder._normalize_depth_for_display(depth_image)
-            display_image = np.hstack((color_image, depth_colormap))
-            display_image = cv2.cvtColor(display_image, cv2.COLOR_BGR2RGB)
-
-            frame_placeholder.image(display_image, channels="RGB", use_container_width=True, caption="Live Feed (Color + Depth)")
-
-    except Exception as e:
-        st.error(f"❌ Camera initialization failed: {str(e)}")
-        return
-
-    finally:
-        if recorder and recorder.is_recording:
-            try:
-                recorder.stop_recording()
-            except Exception as e:
-                st.error(f"❌ Cleanup error: {str(e)}")
-
-        if camera:
-            try:
-                camera.release_camera()
-            except Exception as e:
-                st.error(f"❌ Camera release error: {str(e)}")
-
-        st.session_state["run"] = False
-
-
 def handle_live_feed():
     """Enhanced live feed handling with better UI feedback"""
     st.subheader("📹 Live Video Feed")
@@ -232,15 +143,17 @@ def handle_live_feed():
                 
                 # Clear the waiting message
                 wait_message.empty()
-                
+                # print(f"RECORDERSAVEPATH: {recorder.current_savepath}")
+                recorder.set_current_savepath('recordings/Recorded_Demo')
+                os.makedirs(f'{recorder.current_savepath}', exist_ok=True)
                 # Create a 'captured_frames' directory if it doesn't exist
                 capture_dir = f'{recorder.current_savepath}/captured_frames'
                 # capture_dir = os.path.join(recorder.current_savepath or "recordings/captured_frames")
                 os.makedirs(capture_dir, exist_ok=True)
                 
                 # Save the frames
-                cv2.imwrite(os.path.join(recording_dir, "captured_frame.jpg"), color_image)
-                np.save(os.path.join(recording_dir, "captured_frame.npy"), depth_image)
+                cv2.imwrite(os.path.join(capture_dir, "image_0.jpg"), color_image)
+                np.save(os.path.join(capture_dir, "image_0.npy"), depth_image)
                 st.success("✅ Frame captured and saved!")
         
         with controls_col4:
@@ -654,7 +567,18 @@ def process_saved_recording(video_path):
         status_placeholder.empty()
 
 
-def take_images_with_classes_for_inference(depth_imagepath = 'recordings/Recorded_Demo/captured_frames/image_1.npy', rgb_imagepath = 'recordings/Recorded_Demo/captured_frames/image_1.jpg', depth_im=None, rgb_im=None, object_classes=['soda_can', 'soda_can']):
+
+def filter_action(input_csv, output_csv):
+    # Read CSV with pandas, automatically handling headers
+    df = pd.read_csv(input_csv)
+    
+    # Filter rows (20 to 60 inclusive)
+    filtered_df = df.iloc[20:61]
+    
+    # Save to CSV
+    filtered_df.to_csv(output_csv, index=False)
+
+def take_images_with_classes_for_inference(depth_imagepath = 'recordings/Recorded_Demo/captured_frames/image_0.npy', rgb_imagepath = 'recordings/Recorded_Demo/captured_frames/image_0.jpg', depth_im=None, rgb_im=None, object_classes=['soda_can', 'white_mug']):
     """Run object detection inference using Gemini API"""
     try:
         if rgb_im is not None and depth_im is not None:
@@ -712,18 +636,50 @@ def take_images_with_classes_for_inference(depth_imagepath = 'recordings/Recorde
             container = [[*object_1_rw_coords, *object_2_rw_coords]]
             print(f"CONTAINER: {container}")
             preds = predict_trajectory('model/pouring_trajectory_model.pth',container)
-            print(f"PREDS: {preds}")
+            # print(f"PREDS: {preds}")
             savepath = f'{depth_imagepath.split("/")[0]}/{depth_imagepath.split("/")[1]}/predicted_trajectory.csv' if depth_imagepath else f'recordings/predicted_trajectory_{time.time()}'
-            print(f'SAVEPATH {savepath}')
+            # print(f'SAVEPATH {savepath}')
             csv_savedpaths = save_predictions_to_csv(preds,savepath)
+            print("CSV SAVED PATHS: ", csv_savedpaths)
+            filter_action(savepath, savepath)
+            
             with open(savepath, 'r') as file:
                 csv_contents = file.read()
-                st.text(csv_contents)
-            # save the image file in reco
+                # st.text(csv_contents)
+
         # Step 2: Send the received generated-trajectory to cobot client
+        cobot_client = CobotClient(ip="192.168.0.149", port="8001")
+
+        cobot_client_payload = {
+            "fundamental_actions": {}
+        }
+        frontend_payload = {
+            "objects": {}
+        }
+        for obj_class, rw_coords in zip(object_classes, [object_1_rw_coords, object_2_rw_coords]):
+            cobot_client_payload['fundamental_actions'][obj_class] = {"coordinates": rw_coords}
+            frontend_payload['objects'][obj_class] = {"coordinates":rw_coords}
+        cobot_client_payload['trajectory_csv'] = csv_contents
+        frontend_payload['trajectory_csv'] = csv_contents
+
+        print(f"COBOT PAYLOAD: {cobot_client_payload}")
+
+        cobot_client_status = cobot_client.send_trajectory_data(cobot_client_payload)
+        # Send to Cobot Client
+        with st.spinner("🤖 Sending data to Cobot..."):
+            cobot_client = CobotClient(ip="192.168.0.149", port="8001")
+            cobot_client_status = cobot_client.send_trajectory_data(cobot_client_payload)
+            print(cobot_client_status)
+            if cobot_client_status:
+                status_placeholder.markdown("✅ Data sent to Cobot successfully")
+                with result_placeholder.expander("🤖 Cobot Client Payload", expanded=False):
+                    st.json(frontend_payload)
+            else:
+                st.warning("⚠️ Cobot client response indicates potential issues")
 
     except Exception as e:
         st.error(f"❌ Error during object detection: {str(e)}")
+
 
 def main():
     """Enhanced main function with better UI organization"""
