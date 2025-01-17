@@ -179,6 +179,20 @@ def get_intrinsics(metadata_filepath: str):
     return color_intrinsics, depth_intrinsics
 
 
+def get_calib_matrices(metadata_filepath:str = "config/config.yaml", region:str= 'usa'):
+    config = load_config()
+    print(f"CONFIG\n{config}")
+    if region == 'india':
+        calib_matrices = config['india_calibration']
+        X = calib_matrices['X']
+        Y = calib_matrices['Y']
+    else:
+        calib_matrices = config['usa_calibration']
+        X = calib_matrices['X']
+        Y = calib_matrices['Y']
+    return X, Y
+
+
 def get_valid_depth(depth_array, x, y):
     """Find the first non-zero depth value within a 10-pixel radius around the given point."""
     height, width = depth_array.shape
@@ -301,54 +315,15 @@ def get_real_world_coordinates(image_path=None, im=None, pixel_x=0, pixel_y=0):
     point_3d = deproject_pixel_to_point(depth_image, (pixel_x, pixel_y), intrinsics)
     return point_3d
 
-
-def _transform_coordinates(point_xyz, calib_matrix_x=calib_matrix_x, calib_matrix_y=calib_matrix_y):
-    """
-    Transform point through both calibration matrices
-    
-    Args:
-        point (list): [x, y, z] coordinates
-        calib_x (list): First calibration matrix (4x4)
-        calib_y (list): Second calibration matrix (4x4)
-    
-    Returns:
-        list: Final transformed coordinates as regular floats [x, y, z]
-    """
-    # Convert inputs to numpy arrays
-    point_array = np.array([*point_xyz, 1.0])
-    calib_x_array = np.array(calib_matrix_x)
-    calib_y_array = np.array(calib_matrix_y)
-    
-    # First transformation (X calibration)
-    transformed_x = calib_x_array @ point_array
-    if transformed_x[3] != 1.0:
-        transformed_x = transformed_x / transformed_x[3]
-    
-    # Second transformation (Y calibration)
-    transformed_y = calib_y_array @ transformed_x
-    if transformed_y[3] != 1.0:
-        transformed_y = transformed_y / transformed_y[3]
-    
-    # Convert to regular floats and return as list
-    return [float(transformed_y[0]), float(transformed_y[1]), float(transformed_y[2])]
-
-
-def ___transform_coordinates(point):
-    """Transform coordinates using X and Y matrices."""
-    B = np.eye(4)
-    B[:3, 3] = point
-    A = calib_matrix_y @ B @ np.linalg.inv(calib_matrix_x)
-    transformed_point = A[:3, 3] * 1000
-    return transformed_point/1000
-
-
 def transform_coordinates(point):
     """Transforms coordinates from input space to cobot base."""
+    calib_matrix_x , calib_matrix_y = get_calib_matrices(region='usa',metadata_filepath="config/config.yaml")
     B = np.eye(4)
     B[:3, 3] = [point[0] / 1000, point[1] / 1000, point[2] / 1000]  # Convert to meters
     A = calib_matrix_y @ B @ np.linalg.inv(calib_matrix_x)
     transformed = A[:3, 3] * 1000  # Convert back to mm
     return [float(transformed_) for transformed_ in transformed]
+
 
 
 # =================== PARSING UTILS ===================

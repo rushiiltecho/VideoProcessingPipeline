@@ -14,6 +14,7 @@ from gemini_constant_api_key import GEMINI_API_KEY
 from gemini_oop_object_detection import ObjectDetector, demo_flow
 from lit_demo_flow import RealSenseManager
 from camera_hi_robotics_realsense_pipeline import RealSenseRecorder
+from model.model import predict_trajectory, save_predictions_to_csv
 from rlef_video_annotation import VideoUploader
 from utils import convert_video, get_real_world_coordinates, get_signed_url, process_images, transform_coordinates, upload_hdf5_file
 from vdeo_analysis_ellm_sudio import VideoAnalyzer
@@ -478,59 +479,6 @@ def handle_timed_recording(duration=10):
         st.session_state["run"] = False
 
 
-def __handle_uploaded_file():
-    """Enhanced file upload handling with better UI/UX"""
-    st.subheader("📤 Upload and Process Video")
-    
-    # File upload section with enhanced UI
-    upload_col1, upload_col2 = st.columns([1, 1])
-    
-
-    uploaded_file = st.file_uploader(
-        "Drop your video file here",
-        type=["mp4", "avi", "mkv"],
-        help="Supported formats: MP4, AVI, MKV"
-    )
-
-    # with upload_col2:
-    #     st.markdown("### 📋 File Info")
-    #     if uploaded_file:
-    #         st.success("✅ File uploaded")
-    #         st.info(f"📁 Name: {uploaded_file.name}")
-    #         st.info(f"📏 Size: {uploaded_file.size / 1024 / 1024:.2f} MB")
-    
-    if not uploaded_file:
-        st.info("👆 Please upload a video file to continue")
-        return
-
-    with st.spinner("📝 Processing uploaded file..."):
-        tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-        tfile.write(uploaded_file.read())
-        original_path = f"{os.path.abspath(uploaded_file.name)}/recordings"
-        upload_directory = os.path.dirname(original_path)
-        video_path = tfile.name
-        
-        convert_video(video_path, video_path)
-    
-    st.success("✅ Video processed successfully")
-    
-    # Video preview
-    st.markdown("### 🎬 Video Preview")
-    st.video(video_path)
-    
-    # Analysis section
-    st.markdown("### 🔍 Analysis Options")
-    analyze_video = st.checkbox(
-        "Run video analysis",
-        value=True,
-        help="Perform detailed analysis of the video content"
-    )
-    
-    if analyze_video:
-        if st.button("🚀 Start Analysis", use_container_width=True):
-            process_saved_recording(video_path)
-
-
 def handle_uploaded_file():
     """Enhanced file upload handling with better UI/UX"""
     st.subheader("📤 Upload and Process Video")
@@ -706,19 +654,19 @@ def process_saved_recording(video_path):
         status_placeholder.empty()
 
 
-def take_images_with_classes_for_inference(depth_imagepath = '/home/ai_hand/Downloads/main_flow_dec27_DEMO/recordings/Recorded_Demo/captured_frames/image_0.npy', rgb_imagepath = '/home/ai_hand/Downloads/main_flow_dec27_DEMO/recordings/Recorded_Demo/captured_frames/image_0.jpg', depth_im=None, rgb_im=None, object_classes=['soda can', 'white mug']):
+def take_images_with_classes_for_inference(depth_imagepath = 'recordings/Recorded_Demo/captured_frames/image_1.npy', rgb_imagepath = 'recordings/Recorded_Demo/captured_frames/image_1.jpg', depth_im=None, rgb_im=None, object_classes=['soda_can', 'soda_can']):
     """Run object detection inference using Gemini API"""
     try:
-        if rgb_imagepath and depth_imagepath:
+        if rgb_im is not None and depth_im is not None:
+            rgb_im = rgb_im
+            depth_im = depth_im
+        
+        elif rgb_imagepath and depth_imagepath:
             st.markdown("### 🔄 Running Object Detection")
             status_placeholder = st.empty()
             result_placeholder = st.empty()
             rgb_im = Image.open(rgb_imagepath)
             depth_im = np.load(depth_imagepath)
-        elif rgb_im is not None and depth_im is not None:
-            rgb_im = rgb_im
-            depth_im = depth_im
-        
         else:
             raise ValueError("Either depth_im and rgb_im or depth_imagepath and rgb_imagepath must be provided.")
 
@@ -760,11 +708,20 @@ def take_images_with_classes_for_inference(depth_imagepath = '/home/ai_hand/Down
                 else:
                     st.warning("⚠️ Object centers are None")
         # PLACEHOLDER for sending the realworld coordinates to the inference and feeding it to the model to generate a trajectory.
-            with st.spinner("Getting the inference from model"):
-                csv_file = "SAMPLE CSV"
-
+        with st.spinner("Getting the inference from model"):
+            container = [[*object_1_rw_coords, *object_2_rw_coords]]
+            print(f"CONTAINER: {container}")
+            preds = predict_trajectory('model/pouring_trajectory_model.pth',container)
+            print(f"PREDS: {preds}")
+            savepath = f'{depth_imagepath.split("/")[0]}/{depth_imagepath.split("/")[1]}/predicted_trajectory.csv' if depth_imagepath else f'recordings/predicted_trajectory_{time.time()}'
+            print(f'SAVEPATH {savepath}')
+            csv_savedpaths = save_predictions_to_csv(preds,savepath)
+            with open(savepath, 'r') as file:
+                csv_contents = file.read()
+                st.text(csv_contents)
             # save the image file in reco
         # Step 2: Send the received generated-trajectory to cobot client
+
     except Exception as e:
         st.error(f"❌ Error during object detection: {str(e)}")
 

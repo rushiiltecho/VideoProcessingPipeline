@@ -36,3 +36,84 @@ camera_config: {
         "depth_scale": 0.0010000000474974513
     },
 }
+
+
+
+usa_calibration: 
+    X: [[ 0.01570446,  0.04550497,  0.99884066, -0.01410545],
+       [ 0.99987604, -0.00184144, -0.01563685,  0.00321751],
+       [ 0.00112775,  0.99896242, -0.04552824, -0.01384999],
+       [ 0.        ,  0.        ,  0.        ,  1.        ]]
+    Y: [
+       [ 0.21398471,  0.5680076 , -0.79471876,  0.83729958],
+       [ 0.97424682, -0.06489009,  0.2159454 , -0.75244171],
+       [ 0.07108926, -0.82046124, -0.56726508,  0.64852922],
+       [ 0.        ,  0.        ,  0.        ,  1.        ]]
+
+india_calibration:
+    X: [
+      [ 0.068, -0.986,  0.152, -0.108],
+      [ 0.998,  0.065, -0.023,  0.0 ],
+      [ 0.013,  0.153,  0.988, -0.044],
+      [ 0.0,    0.0,    0.0,    1.0  ]]
+
+    Y: [
+      [-0.47,   0.587,  -0.659,  0.73929],
+      [ 0.877,  0.392,  -0.276, -0.16997],
+      [ 0.096, -0.708,  -0.7,    0.86356],
+      [ 0.0,    0.0,     0.0,    1.0    ]]
+
+
+# This can be used for TrajectoryNet and DenseTrajectoryNet
+#------------------------------------------------------------------#
+TrajectoryNet:
+  data:
+    file_path: "dataset/dataset.csv"
+    save_dir: "./checkpoints"
+
+  model:
+    input_size: 6
+    hidden_size: 128
+    output_size: 320
+    dropout: 0.25
+
+  training:
+    name: "Large_TrajectoryNet"
+    batch_size: 512
+    base_lr: 0.001         # Base learning rate for warmup
+    learning_rate: 0.0001   # Main learning rate
+    weight_decay: 0.0001
+    num_epochs: 500
+    warmup_epochs: 50      # Number of warmup epochs
+    grad_clip_value: 5.0   # Gradient clipping value
+    early_stopping_patience: 50
+    save_dir: "./checkpoints"
+
+  wandb:
+    project: "Fundamental-Actions"
+    enabled: true
+#---------------------------------------------------#
+
+TrajectoryLSTM:
+  input_size: 10
+  hidden_size: 512
+  num_layers: 5
+  output_size: 4
+  dropout: 0.2
+  
+  data:
+    file_path: "dataset/lstm_dataset.csv"
+    save_dir: "./checkpoints"
+
+  training:
+    batch_size: 80
+    target_size: 4 
+    input_size: 10
+    seq_len: 80
+    epochs: 500
+    learning_rate: 0.001
+
+
+device: "cuda"
+
+wandb: True
