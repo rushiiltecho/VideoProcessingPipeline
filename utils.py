@@ -304,10 +304,10 @@ def get_real_world_coordinates(image_path=None, im=None, pixel_x=0, pixel_y=0):
     color_intrinsics, depth_intrinsics = get_intrinsics("config/config.yaml")
     intrinsics.width = 640
     intrinsics.height = 480
-    intrinsics.ppx = depth_intrinsics['ppx']
-    intrinsics.ppy = depth_intrinsics['ppy']
-    intrinsics.fx = depth_intrinsics['fx']
-    intrinsics.fy = depth_intrinsics['fy']
+    intrinsics.ppx = color_intrinsics['ppx']
+    intrinsics.ppy = color_intrinsics['ppy']
+    intrinsics.fx = color_intrinsics['fx']
+    intrinsics.fy = color_intrinsics['fy']
     intrinsics.model = rs.distortion.inverse_brown_conrady
     intrinsics.coeffs = [0, 0, 0, 0, 0]
 
@@ -317,7 +317,7 @@ def get_real_world_coordinates(image_path=None, im=None, pixel_x=0, pixel_y=0):
 
 def transform_coordinates(point):
     """Transforms coordinates from input space to cobot base."""
-    calib_matrix_x , calib_matrix_y = get_calib_matrices(region='usa',metadata_filepath="config/config.yaml")
+    # calib_matrix_x , calib_matrix_y = get_calib_matrices(region='india',metadata_filepath="config/config.yaml")
     B = np.eye(4)
     B[:3, 3] = [point[0] / 1000, point[1] / 1000, point[2] / 1000]  # Convert to meters
     A = calib_matrix_y @ B @ np.linalg.inv(calib_matrix_x)

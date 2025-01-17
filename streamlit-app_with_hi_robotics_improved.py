@@ -631,9 +631,12 @@ def take_images_with_classes_for_inference(depth_imagepath = 'recordings/Recorde
                         })
                 else:
                     st.warning("⚠️ Object centers are None")
+
+                object_1_rw_coords_to_send = [coord/1000 for coord in object_1_rw_coords] 
+                object_2_rw_coords_to_send = [coord/1000 for coord in object_2_rw_coords] 
         # PLACEHOLDER for sending the realworld coordinates to the inference and feeding it to the model to generate a trajectory.
         with st.spinner("Getting the inference from model"):
-            container = [[*object_1_rw_coords, *object_2_rw_coords]]
+            container = [[ *object_2_rw_coords, *object_1_rw_coords]]
             print(f"CONTAINER: {container}")
             preds = predict_trajectory('model/pouring_trajectory_model.pth',container)
             # print(f"PREDS: {preds}")
@@ -656,7 +659,7 @@ def take_images_with_classes_for_inference(depth_imagepath = 'recordings/Recorde
         frontend_payload = {
             "objects": {}
         }
-        for obj_class, rw_coords in zip(object_classes, [object_1_rw_coords, object_2_rw_coords]):
+        for obj_class, rw_coords in zip(object_classes, [object_1_rw_coords_to_send, object_2_rw_coords_to_send]):
             cobot_client_payload['fundamental_actions'][obj_class] = {"coordinates": rw_coords}
             frontend_payload['objects'][obj_class] = {"coordinates":rw_coords}
         cobot_client_payload['trajectory_csv'] = csv_contents
