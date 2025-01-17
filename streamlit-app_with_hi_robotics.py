@@ -1,15 +1,15 @@
-from datetime import datetime
-import json
-import re
-from hi_robotics.vision_ai.cameras.intel_realsense_camera import IntelRealSenseCamera
-import streamlit as st
-import tempfile
 import os
+import time
+import json
 import cv2
 import numpy as np
-import time
-from PIL import Image
 import pandas as pd
+import tempfile
+import streamlit as st
+
+from PIL import Image
+from datetime import datetime
+from hi_robotics.vision_ai.cameras.intel_realsense_camera import IntelRealSenseCamera
 
 from gemini_constant_api_key import GEMINI_API_KEY
 from gemini_oop_object_detection import ObjectDetector, demo_flow
@@ -17,628 +17,779 @@ from lit_demo_flow import RealSenseManager
 from camera_hi_robotics_realsense_pipeline import RealSenseRecorder
 from model.model import predict_trajectory, save_predictions_to_csv
 from rlef_video_annotation import VideoUploader
-from utils import convert_video, get_real_world_coordinates, get_signed_url, process_images, transform_coordinates, upload_hdf5_file
+from utils import (
+    convert_video,
+    get_real_world_coordinates,
+    get_signed_url,
+    process_images,
+    transform_coordinates,
+    upload_hdf5_file,
+)
 from vdeo_analysis_ellm_sudio import VideoAnalyzer
 from dsr_control_api.dsr_control_api.cobotclient import CobotClient
 
-# Constants
-OUTPUT_DIR = 'recordings'
-RECORDING_NAME = 'Recorded_Demo'
-RECORDING_DIR = f'{OUTPUT_DIR}/{RECORDING_NAME}'
+###############################################################################
+#                       CONFIGURATION SECTION
+###############################################################################
 
-class SessionState:
-    """Class to manage session state variables"""
-    def __init__(self):
-        if 'initialized' not in st.session_state:
-            st.session_state['initialized'] = True
-            st.session_state['run'] = True
-            st.session_state['recording_status'] = False
-            st.session_state['processed_data'] = {}
-            st.session_state['analysis_results'] = {}
-            st.session_state['cobot_status'] = {}
-            st.session_state['current_video'] = None
-            st.session_state['object_detection_results'] = {}
-            st.session_state['trajectory_data'] = None
-            st.session_state['error_log'] = []
-            st.session_state['processing_history'] = []
+def configure_paths():
+    """
+    Create a sidebar section for configuring filepaths so that no paths are hardcoded.
+    Adjust default values as needed for your own environment.
+    """
+    with st.sidebar.expander("⚙️ Path Configuration", expanded=False):
+        base_dir = st.text_input("Base Recording Directory:", value="recordings")
+        rec_name = st.text_input("Recording Subdirectory:", value="Recorded_Demo")
+        model_path = st.text_input("Model Path (.pth):", value="model/pouring_trajectory_model.pth")
+        payload_path = st.text_input("Payload JSON Path:", value="payload.json")
 
-class DataLogger:
-    """Class to handle logging and data persistence"""
-    @staticmethod
-    def log_error(error_message, error_type="ERROR"):
-        timestamp = datetime.now().isoformat()
-        st.session_state['error_log'].append({
-            'timestamp': timestamp,
-            'type': error_type,
-            'message': str(error_message)
-        })
+        if "base_dir" not in st.session_state:
+            st.session_state["base_dir"] = base_dir
+        if "rec_name" not in st.session_state:
+            st.session_state["rec_name"] = rec_name
+        if "model_path" not in st.session_state:
+            st.session_state["model_path"] = model_path
+        if "payload_path" not in st.session_state:
+            st.session_state["payload_path"] = payload_path
 
-    @staticmethod
-    def log_processing(action, status, details=None):
-        timestamp = datetime.now().isoformat()
-        st.session_state['processing_history'].append({
-            'timestamp': timestamp,
-            'action': action,
-            'status': status,
-            'details': details
-        })
+        # Update session state if user changes text inputs
+        if st.button("Save Path Configuration"):
+            st.session_state["base_dir"] = base_dir
+            st.session_state["rec_name"] = rec_name
+            st.session_state["model_path"] = model_path
+            st.session_state["payload_path"] = payload_path
+            st.success("✅ File paths updated in session state!")
 
-class VideoProcessor:
-    """Class to handle video processing operations"""
-    def __init__(self):
-        self.camera = None
-        self.recorder = None
-        self.logger = DataLogger()
+###############################################################################
+#                          GLOBAL STATE AND HELPERS
+###############################################################################
+
+output_path = None
+
+def initialize_session_state():
+    """Initialize session state variables (e.g. for controlling camera feed)."""
+    if "run" not in st.session_state:
+        st.session_state["run"] = True
+    if "recording_status" not in st.session_state:
+        st.session_state["recording_status"] = False
+
+def create_sidebar():
+    """Create a sidebar with instructions and mode selection."""
+    with st.sidebar:
+        st.title("🎥 Video Processing")
         
-    def initialize_camera(self):
-        """Initialize camera with retry mechanism"""
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                self.camera = IntelRealSenseCamera()
-                self.recorder = RealSenseRecorder(camera=self.camera)
-                self.logger.log_processing("Camera Initialization", "SUCCESS")
-                return True
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    time.sleep(2)
-                else:
-                    self.logger.log_error(f"Camera initialization failed: {str(e)}")
-                    st.error(f"Camera initialization failed after {max_retries} attempts: {str(e)}")
-                    return False
+        st.markdown("### 📝 Instructions")
+        with st.expander("How to use this app", expanded=True):
+            st.markdown("""
+            1. **Select Mode** 🔄
+               - Live Video Feed: Record from camera
+               - 8-Second Recording: Record short timed video
+               - Upload Video File: Process existing video
+               - Run Inference: Pick frames and run object-detection/trajectory logic
+
+            2. **Process Video** 🎬
+               - Follow on-screen instructions
+               - Wait for processing completion
+
+            3. **View Results** 📊
+               - Check analysis results
+               - Download processed data
+            """)
+        
+        mode = st.radio(
+            "Select Operating Mode",
+            ("Live Video Feed", '8-Second Recording', "Upload Video File", "Run Inference"),
+            index=2,
+            help="Choose how you want to input video data"
+        )
+        
+        st.markdown("---")
+        st.markdown("### 🔧 System Status")
+        st.success("System Ready")
+        
+        return mode
+
+
+def create_header():
+    """Create a header section for the app."""
+    st.markdown("""
+    <h1 style='text-align: center;'>
+        Video Stream and Analysis Platform
+    </h1>
+    """, unsafe_allow_html=True)
     
-    def cleanup(self):
-        """Cleanup camera resources"""
-        try:
-            if self.recorder and self.recorder.is_recording:
-                self.recorder.stop_recording()
-                self.logger.log_processing("Recording Cleanup", "SUCCESS")
-            
-            if self.camera:
-                self.camera.release_camera()
-                self.logger.log_processing("Camera Release", "SUCCESS")
-        except Exception as e:
-            self.logger.log_error(f"Cleanup error: {str(e)}")
-            st.error(f"Error during cleanup: {str(e)}")
+    st.markdown("""
+    <p style='text-align: center; color: gray;'>
+        Record, analyze, and process video data with ease
+    </p>
+    """, unsafe_allow_html=True)
 
-class UIManager:
-    """Class to manage UI components and layout"""
-    @staticmethod
-    def create_sidebar():
-        with st.sidebar:
-            st.title("🎥 Video Processing")
-            
-            st.markdown("### 📝 Navigation")
-            mode = st.radio(
-                "Select Mode",
-                ["Live Feed", "Recording", "Analysis", "Results", "System Status"],
-                help="Choose operation mode"
-            )
-            
-            st.markdown("---")
-            st.markdown("### ⚙️ Settings")
-            if st.checkbox("Show Debug Info", False):
-                st.json(st.session_state['error_log'])
-                st.json(st.session_state['processing_history'])
-            
-            if st.button("Reset Session"):
-                for key in st.session_state.keys():
-                    del st.session_state[key]
-                st.rerun()
-            
-            return mode
+###############################################################################
+#                          VIDEO HANDLING FUNCTIONS
+###############################################################################
 
-    @staticmethod
-    def create_header():
-        st.markdown("""
-        <h1 style='text-align: center;'>
-            Advanced Video Processing Platform
-        </h1>
-        <p style='text-align: center; color: gray;'>
-            Record, analyze, and process video data with enhanced capabilities
-        </p>
-        """, unsafe_allow_html=True)
+def handle_live_feed():
+    """Handle live feed from IntelRealSenseCamera."""
+    st.subheader("📹 Live Video Feed")
+    
+    recorder = None
+    camera = None
+    
+    # Build the dynamic path from session state
+    base_recording_dir = st.session_state["base_dir"]
+    rec_subdir = st.session_state["rec_name"]
+    recording_dir = os.path.join(base_recording_dir, rec_subdir)
 
-    @staticmethod
-    def show_results_tabs():
-        tabs = st.tabs(["Analysis Results", "Object Detection", "Cobot Status", "Trajectory Data", "Processing History"])
+    try:
+        with st.spinner("🎥 Initializing camera..."):
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    camera = IntelRealSenseCamera()
+                    recorder = RealSenseRecorder(camera=camera)
+                    break
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        time.sleep(2)
+                    else:
+                        raise e
         
-        with tabs[0]:
-            if 'analysis_results' in st.session_state and st.session_state['analysis_results']:
-                st.json(st.session_state['analysis_results'])
-                if st.button("Export Analysis Results"):
-                    UIManager.export_data('analysis_results.json', st.session_state['analysis_results'])
-            else:
-                st.info("No analysis results available yet")
-        
-        with tabs[1]:
-            if 'object_detection_results' in st.session_state and st.session_state['object_detection_results']:
-                st.json(st.session_state['object_detection_results'])
-                if st.button("Export Detection Results"):
-                    UIManager.export_data('detection_results.json', st.session_state['object_detection_results'])
-            else:
-                st.info("No object detection results available yet")
-        
-        with tabs[2]:
-            if 'cobot_status' in st.session_state and st.session_state['cobot_status']:
-                st.json(st.session_state['cobot_status'])
-            else:
-                st.info("No cobot status available yet")
-        
-        with tabs[3]:
-            if 'trajectory_data' in st.session_state and st.session_state['trajectory_data'] is not None:
-                st.line_chart(pd.DataFrame(st.session_state['trajectory_data']))
-                if st.button("Export Trajectory Data"):
-                    UIManager.export_data('trajectory.csv', st.session_state['trajectory_data'])
-            else:
-                st.info("No trajectory data available yet")
-        
-        with tabs[4]:
-            if st.session_state['processing_history']:
-                df = pd.DataFrame(st.session_state['processing_history'])
-                st.dataframe(df)
-            else:
-                st.info("No processing history available yet")
-
-    @staticmethod
-    def export_data(filename, data):
-        """Export data to file"""
-        try:
-            if filename.endswith('.json'):
-                with open(filename, 'w') as f:
-                    json.dump(data, f)
-            elif filename.endswith('.csv'):
-                pd.DataFrame(data).to_csv(filename, index=False)
-            st.success(f"Data exported to {filename}")
-        except Exception as e:
-            st.error(f"Error exporting data: {str(e)}")
-
-class VideoRecordingHandler:
-    """Class to handle video recording operations"""
-    def __init__(self):
-        self.processor = VideoProcessor()
-        self.logger = DataLogger()
-        
-    def handle_live_feed(self):
-        if not self.processor.initialize_camera():
+        if not recorder:
+            st.error("❌ Failed to initialize camera after multiple attempts")
             return
         
-        try:
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.markdown("### 📺 Live Preview")
-                frame_placeholder = st.empty()
-            
-            with col2:
-                st.markdown("### 🎮 Controls")
-                control_tabs = st.tabs(["Recording", "Capture", "Settings"])
+        # Enhanced UI Controls
+        st.markdown("### 🎮 Controls")
+        controls_col1, controls_col2, controls_col3, controls_col4 = st.columns(4)
+        
+        with controls_col1:
+            if st.button("🟢 Start Recording", use_container_width=True, 
+                        disabled=st.session_state.get("recording_status", False)):
+                st.session_state["recording_status"] = True
+                recorder.start_recording(rec_subdir)  # Use the subdir name
+                st.success(f"📝 Recording to: {recorder.get_current_savepath()}")
+                global output_path
+                output_path = recorder.get_current_savepath()
+        
+        with controls_col2:
+            if st.button("🔴 Stop Recording", use_container_width=True,
+                        disabled=not st.session_state.get("recording_status", False)):
+                st.session_state["recording_status"] = False
+                recorder.stop_recording()
+                st.info(f"✅ Captured frames")
+        
+        with controls_col3:
+            if st.button("📸 Capture Frame", use_container_width=True):
+                wait_message = st.empty()
+                wait_message.info("⏳ Waiting for camera to stabilize...")
+                time.sleep(1.0)
                 
-                with control_tabs[0]:
-                    if st.button("Start Recording", disabled=st.session_state['recording_status']):
-                        st.session_state['recording_status'] = True
-                        self.processor.recorder.start_recording(RECORDING_NAME)
-                        self.logger.log_processing("Recording", "STARTED")
-                    
-                    if st.button("Stop Recording", disabled=not st.session_state['recording_status']):
-                        st.session_state['recording_status'] = False
-                        self.processor.recorder.stop_recording()
-                        self.logger.log_processing("Recording", "STOPPED")
-                        st.success("Recording saved!")
-                
-                with control_tabs[1]:
-                    if st.button("Capture Frame"):
-                        self.capture_frame()
-                    
-                    if st.button("Process Latest Frame"):
-                        self.process_latest_frame()
-                
-                with control_tabs[2]:
-                    st.slider("Frame Rate", 1, 30, 10, key="frame_rate")
-                    st.checkbox("Show Depth Map", True, key="show_depth")
-            
-            while st.session_state.get('run', True):
-                rgb_frame, depth_frame = self.processor.camera.get_frames()
+                # Capture frames
+                rgb_frame, depth_frame = camera.get_frames()
                 color_image = np.asanyarray(rgb_frame.get_data())
                 depth_image = np.asanyarray(depth_frame.get_data())
                 
-                display_image = self.prepare_display_image(color_image, depth_image)
-                frame_placeholder.image(display_image, channels="RGB", use_container_width=True)
+                wait_message.empty()
                 
-                if st.session_state['recording_status']:
-                    self.save_frame(rgb_frame, depth_frame, color_image, depth_image)
+                # Ensure subdirectories exist
+                recorder.set_current_savepath(recording_dir)
+                os.makedirs(recording_dir, exist_ok=True)
+                capture_dir = os.path.join(recording_dir, "captured_frames")
+                os.makedirs(capture_dir, exist_ok=True)
                 
-                time.sleep(1/st.session_state.get("frame_rate", 10))
-                
-        except Exception as e:
-            self.logger.log_error(f"Live feed error: {str(e)}")
-            st.error(f"Error in live feed: {str(e)}")
-        finally:
-            self.processor.cleanup()
+                # Save the frames
+                cv2.imwrite(os.path.join(capture_dir, "image_0.jpg"), color_image)
+                np.save(os.path.join(capture_dir, "image_0.npy"), depth_image)
+                st.success("✅ Frame captured and saved!")
+        
+        with controls_col4:
+            if st.button("⏹️ Quit", use_container_width=True):
+                if recorder and recorder.is_recording:
+                    recorder.stop_recording()
+                st.session_state["run"] = False
+                st.rerun()
+        
+        # Status indicators
+        status_col1, status_col2 = st.columns(2)
+        with status_col1:
+            st.metric("Recording Status", 
+                      "Active 🟢" if st.session_state.get("recording_status", False) else "")
+        with status_col2:
+            if st.session_state.get("recording_status", False):
+                st.metric("Frames Captured", recorder.frame_count if recorder else 0)
+        
+        # Display frames with enhanced layout
+        st.markdown("### 📺 Live Preview")
+        frame_placeholder = st.empty()
+        
+        interval = 1/10  # seconds between frames
+        last_capture_time = time.time()
 
-    def prepare_display_image(self, color_image, depth_image):
-        try:
-            if st.session_state.get("show_depth", True):
-                depth_colormap = self.processor.recorder._normalize_depth_for_display(depth_image)
+        while st.session_state.get("run", True):
+            try:
+                rgb_frame, depth_frame = camera.get_frames()
+                color_image = np.asanyarray(rgb_frame.get_data())
+                depth_image = np.asanyarray(depth_frame.get_data())
+                
+                depth_colormap = recorder._normalize_depth_for_display(depth_image)
                 display_image = np.hstack((color_image, depth_colormap))
-            else:
-                display_image = color_image
-            return cv2.cvtColor(display_image, cv2.COLOR_BGR2RGB)
-        except Exception as e:
-            self.logger.log_error(f"Display preparation error: {str(e)}")
-            return color_image
+                display_image = cv2.cvtColor(display_image, cv2.COLOR_BGR2RGB)
+                
+                frame_placeholder.image(display_image, channels="RGB", use_container_width=True,
+                                        caption="Live Feed (Color + Depth)")
+                
+                current_time = time.time()
+                
+                if recorder.is_recording and (current_time - last_capture_time >= interval):
+                    recorder._append_frames(rgb_frame, depth_frame)
+                    recorder.frame_count += 1
 
-    def save_frame(self, rgb_frame, depth_frame, color_image, depth_image):
-        try:
-            self.processor.recorder._append_frames(rgb_frame, depth_frame)
-            frame_count = self.processor.recorder.frame_count
-            
-            rgb_path = f"{RECORDING_DIR}/rgb_images_data_collection/image_{frame_count}.jpg"
-            depth_path = f"{RECORDING_DIR}/depth_images_data_collection/image_{frame_count}.npy"
-            
-            os.makedirs(os.path.dirname(rgb_path), exist_ok=True)
-            os.makedirs(os.path.dirname(depth_path), exist_ok=True)
-            
-            cv2.imwrite(rgb_path, color_image)
-            np.save(depth_path, depth_image)
-            
-            self.processor.recorder.frame_count += 1
-            self.logger.log_processing("Frame Save", "SUCCESS", {'frame_number': frame_count})
-        except Exception as e:
-            self.logger.log_error(f"Frame save error: {str(e)}")
-            st.error(f"Error saving frame: {str(e)}")
+                    with st.spinner("Saving frames..."):
+                        rgb_images_dir = os.path.join(recorder.current_savepath, "rgb_images_data_collection")
+                        depth_images_dir = os.path.join(recorder.current_savepath, "depth_images_data_collection")
+                        os.makedirs(rgb_images_dir, exist_ok=True)
+                        os.makedirs(depth_images_dir, exist_ok=True)
 
-    def capture_frame(self):
-        try:
-            rgb_frame, depth_frame = self.processor.camera.get_frames()
-            color_image = np.asanyarray(rgb_frame.get_data())
-            depth_image = np.asanyarray(depth_frame.get_data())
-            
-            capture_dir = f'{RECORDING_DIR}/captured_frames'
-            os.makedirs(capture_dir, exist_ok=True)
-            
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            cv2.imwrite(f"{capture_dir}/captured_frame_{timestamp}.jpg", color_image)
-            np.save(f"{capture_dir}/captured_frame_{timestamp}.npy", depth_image)
-            
-            st.session_state['current_frame'] = {
-                'color': color_image,
-                'depth': depth_image,
-                'timestamp': timestamp
-            }
-            
-            self.logger.log_processing("Frame Capture", "SUCCESS", {'timestamp': timestamp})
-            st.success("Frame captured successfully!")
-        except Exception as e:
-            self.logger.log_error(f"Frame capture error: {str(e)}")
-            st.error(f"Error capturing frame: {str(e)}")
+                        rgb_path = os.path.join(rgb_images_dir, f"image_{recorder.frame_count}.jpg")
+                        cv2.imwrite(rgb_path, color_image)
 
-    def process_latest_frame(self):
-        if not st.session_state.get('current_frame'):
-            st.warning("No frame captured yet!")
+                        depth_path = os.path.join(depth_images_dir, f"image_{recorder.frame_count}.npy")
+                        np.save(depth_path, depth_image)
+
+                    last_capture_time = current_time
+                    
+            except Exception as e:
+                st.error(f"❌ Frame capture error: {str(e)}")
+                break
+                
+    except Exception as e:
+        st.error(f"❌ Camera initialization failed: {str(e)}")
+        return
+        
+    finally:
+        if recorder and recorder.is_recording:
+            try:
+                recorder.stop_recording()
+            except Exception as e:
+                st.error(f"❌ Cleanup error: {str(e)}")
+        
+        if camera:
+            try:
+                camera.release_camera()
+            except Exception as e:
+                st.error(f"❌ Camera release error: {str(e)}")
+                
+        st.session_state["run"] = False
+
+
+def handle_timed_recording(duration=10):
+    """Record from the camera for a fixed duration."""
+    st.subheader("⏲️ Timed Video Recording")
+    
+    recorder = None
+    camera = None
+
+    base_recording_dir = st.session_state["base_dir"]
+    rec_subdir = st.session_state["rec_name"]
+    recording_dir = os.path.join(base_recording_dir, rec_subdir)
+    
+    try:
+        with st.spinner("🎥 Initializing camera..."):
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    camera = IntelRealSenseCamera()
+                    recorder = RealSenseRecorder(camera=camera)
+                    break
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        time.sleep(2)
+                    else:
+                        raise e
+        
+        if not recorder:
+            st.error("❌ Failed to initialize camera after multiple attempts")
             return
         
-        try:
-            analysis_handler = AnalysisHandler()
-            results = analysis_handler.detect_objects(
-                st.session_state['current_frame']['color'],
-                st.session_state['current_frame']['depth']
-            )
-            
-            if results:
-                # Generate trajectory
-                container = [[*coord] for coord in results.values()]
-                trajectory = predict_trajectory('model/pouring_trajectory_model.pth', container)
-                st.session_state['trajectory_data'] = trajectory
+        st.markdown("### 🎮 Controls")
+        controls_col1, controls_col2, controls_col3 = st.columns(3)
+        
+        # Initialize timer state
+        if "start_time" not in st.session_state:
+            st.session_state.start_time = None
+        
+        with controls_col1:
+            if st.button("🟢 Start Timed Recording", use_container_width=True,
+                        disabled=st.session_state.get("recording_status", False)):
+                st.session_state["recording_status"] = True
+                st.session_state.start_time = time.time()
+                recorder.start_recording(rec_subdir)
+                st.success(f"📝 Recording to: {recorder.get_current_savepath()}")
+                global output_path
+                output_path = recorder.get_current_savepath()
+        
+        with controls_col2:
+            if st.button("⏹️ Stop Early", use_container_width=True,
+                        disabled=not st.session_state.get("recording_status", False)):
+                st.session_state["recording_status"] = False
+                st.session_state.start_time = None
+                recorder.stop_recording()
+                st.info(f"✅ Recording stopped manually")
+                st.session_state["run"] = False
+                st.rerun()
+        
+        with controls_col3:
+            if st.button("📸 Capture Frame", use_container_width=True):
+                os.makedirs(recording_dir, exist_ok=True)
+                wait_message = st.empty()
+                wait_message.info("⏳ Waiting for camera to stabilize...")
+                time.sleep(1.0)
                 
-                # Send to cobot
-                cobot_handler = CobotHandler()
-                payload = {
-                    "fundamental_actions": {
-                        class_name: {"coordinates": coords.tolist()}
-                        for class_name, coords in results.items()
-                    },
-                    "trajectory_data": trajectory.tolist()
-                }
-                cobot_handler.send_to_cobot(payload)
+                # Capture frames
+                rgb_frame, depth_frame = camera.get_frames()
+                color_image = np.asanyarray(rgb_frame.get_data())
+                depth_image = np.asanyarray(depth_frame.get_data())
                 
-                self.logger.log_processing("Frame Processing", "SUCCESS", {
-                    'timestamp': st.session_state['current_frame']['timestamp'],
-                    'objects_detected': len(results)
-                })
-        except Exception as e:
-            self.logger.log_error(f"Frame processing error: {str(e)}")
-            st.error(f"Error processing frame: {str(e)}")
+                wait_message.empty()
+                
+                # Save the frames
+                cv2.imwrite(os.path.join(recording_dir, "captured_frame.jpg"), color_image)
+                np.save(os.path.join(recording_dir, "captured_frame.npy"), depth_image)
+                st.success("✅ Frame captured and saved!")
+        
+        status_col1, status_col2 = st.columns(2)
+        timer_placeholder = st.empty()
+        
+        with status_col1:
+            st.metric("Recording Status", 
+                      "Active 🟢" if st.session_state.get("recording_status", False) else "Inactive 🔴")
+        with status_col2:
+            if st.session_state.get("recording_status", False):
+                st.metric("Frames Captured", recorder.frame_count if recorder else 0)
+        
+        st.markdown("### 📺 Live Preview")
+        frame_placeholder = st.empty()
+        
+        interval = 1/10  # seconds between frames
+        last_capture_time = time.time()
+        while st.session_state.get("run", True):
+            try:
+                current_time = time.time()
+                
+                # Update timer display
+                if st.session_state.get("recording_status", False) and st.session_state.start_time is not None:
+                    elapsed_time = current_time - st.session_state.start_time
+                    remaining_time = max(0, duration - elapsed_time)
+                    timer_placeholder.markdown(f"### ⏱️ Time Remaining: {remaining_time:.1f} seconds")
+                    
+                    if elapsed_time >= duration:
+                        st.session_state["recording_status"] = False
+                        st.session_state.start_time = None
+                        recorder.stop_recording()
+                        st.success(f"✅ Recording completed after {duration} seconds!")
+                        st.session_state["run"] = False
+                        st.rerun()
+                        break
+                
+                rgb_frame, depth_frame = camera.get_frames()
+                color_image = np.asanyarray(rgb_frame.get_data())
+                depth_image = np.asanyarray(depth_frame.get_data())
+                
+                depth_colormap = recorder._normalize_depth_for_display(depth_image)
+                display_image = np.hstack((color_image, depth_colormap))
+                display_image = cv2.cvtColor(display_image, cv2.COLOR_BGR2RGB)
+                
+                frame_placeholder.image(display_image, channels="RGB", use_container_width=True,
+                                        caption="Live Feed (Color + Depth)")
+                
+                if (st.session_state.get("recording_status", False) 
+                    and (current_time - last_capture_time >= interval) 
+                    and recorder.frame_count <= 80):
+                    
+                    recorder._append_frames(rgb_frame, depth_frame)
+                    recorder.frame_count += 1
 
-class AnalysisHandler:
-    """Class to handle video analysis operations"""
-    def __init__(self):
-        self.analyzer = VideoAnalyzer(payload={})
-        self.detector = ObjectDetector(api_key=GEMINI_API_KEY, recording_dir=RECORDING_DIR)
-        self.logger = DataLogger()
+                    with st.spinner("Saving frames..."):
+                        rgb_images_dir = os.path.join(recorder.current_savepath, "rgb_images_data_collection")
+                        depth_images_dir = os.path.join(recorder.current_savepath, "depth_images_data_collection")
+                        os.makedirs(rgb_images_dir, exist_ok=True)
+                        os.makedirs(depth_images_dir, exist_ok=True)
+
+                        rgb_path = os.path.join(rgb_images_dir, f"image_{recorder.frame_count}.jpg")
+                        cv2.imwrite(rgb_path, color_image)
+
+                        depth_path = os.path.join(depth_images_dir, f"image_{recorder.frame_count}.npy")
+                        np.save(depth_path, depth_image)
+
+                    last_capture_time = current_time
+                    
+            except Exception as e:
+                st.error(f"❌ Frame capture error: {str(e)}")
+                break
+                
+    except Exception as e:
+        st.error(f"❌ Camera initialization failed: {str(e)}")
+        return
+        
+    finally:
+        if recorder and recorder.is_recording:
+            try:
+                recorder.stop_recording()
+            except Exception as e:
+                st.error(f"❌ Cleanup error: {str(e)}")
+        
+        if camera:
+            try:
+                camera.release_camera()
+            except Exception as e:
+                st.error(f"❌ Camera release error: {str(e)}")
+                
+        st.session_state["run"] = False
+
+
+def handle_uploaded_file():
+    """Handle uploaded video file processing."""
+    st.subheader("📤 Upload and Process Video")
     
-    def analyze_video(self, video_path):
-        try:
-            with st.spinner("Analyzing video..."):
-                gcp_url = self.analyzer.upload_video_to_bucket("analysis.mp4", video_path)
-                self.logger.log_processing("Video Upload", "SUCCESS", {'url': gcp_url})
-                
-                # Get annotations
-                annotations = self.analyzer.get_gemini_response(gcp_url=gcp_url)
-                if annotations:
-                    st.session_state['analysis_results'] = annotations
-                    self.logger.log_processing("Video Analysis", "SUCCESS", {
-                        'annotations_count': len(annotations) if isinstance(annotations, list) else 1
-                    })
-                
-                # Process coordinates
-                response_coordinates = self.detector.get_real_world_coordinates(annotations)
-                if response_coordinates:
-                    st.session_state['object_detection_results'] = response_coordinates
-                    self.logger.log_processing("Coordinate Processing", "SUCCESS", {
-                        'coordinates_count': len(response_coordinates)
-                    })
-                
-                st.success("Analysis completed!")
-                return True
-        except Exception as e:
-            self.logger.log_error(f"Video analysis error: {str(e)}")
-            st.error(f"Error in video analysis: {str(e)}")
-            return False
-
-    def detect_objects(self, rgb_image, depth_image, object_classes=['soda_can', 'soda_can']):
-        try:
-            with st.spinner("Detecting objects..."):
-                # Get object centers
-                object_centers = self.detector.get_object_centers(rgb_image, object_classes)
-                if not object_centers:
-                    self.logger.log_processing("Object Detection", "WARNING", "No objects detected")
-                    st.warning("No objects detected")
-                    return
-                
-                # Process coordinates
-                results = {}
-                for obj_class, centers in object_centers.items():
-                    if centers and centers[0] is not None:
-                        coords = transform_coordinates(
-                            get_real_world_coordinates(
-                                pixel_x=centers[0][0],
-                                pixel_y=centers[0][1],
-                                im=depth_image
-                            )
-                        )
-                        results[obj_class] = coords
-                
-                st.session_state['object_detection_results'] = results
-                self.logger.log_processing("Object Detection", "SUCCESS", {
-                    'objects_detected': len(results)
-                })
-                return results
-        except Exception as e:
-            self.logger.log_error(f"Object detection error: {str(e)}")
-            st.error(f"Error in object detection: {str(e)}")
-            return None
-
-class TrajectoryHandler:
-    """Class to handle trajectory generation and processing"""
-    def __init__(self):
-        self.logger = DataLogger()
-
-    def generate_trajectory(self, coordinates):
-        try:
-            container = [[*coords] for coords in coordinates.values()]
-            trajectory = predict_trajectory('model/pouring_trajectory_model.pth', container)
-            
-            st.session_state['trajectory_data'] = trajectory
-            self.logger.log_processing("Trajectory Generation", "SUCCESS", {
-                'points_count': len(trajectory)
-            })
-            
-            # Save trajectory to CSV
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            csv_path = f"{RECORDING_DIR}/trajectories/trajectory_{timestamp}.csv"
-            os.makedirs(os.path.dirname(csv_path), exist_ok=True)
-            save_predictions_to_csv(trajectory, csv_path)
-            
-            return trajectory
-        except Exception as e:
-            self.logger.log_error(f"Trajectory generation error: {str(e)}")
-            st.error(f"Error generating trajectory: {str(e)}")
-            return None
-
-class CobotHandler:
-    """Class to handle cobot operations"""
-    def __init__(self):
-        self.client = CobotClient(ip="192.168.0.149", port="8001")
-        self.logger = DataLogger()
-    
-    def send_to_cobot(self, payload):
-        try:
-            with st.spinner("Sending data to cobot..."):
-                status = self.client.send_trajectory_data(payload)
-                if status:
-                    st.session_state['cobot_status'] = {
-                        'status': 'success',
-                        'timestamp': datetime.now().isoformat(),
-                        'payload': payload
-                    }
-                    self.logger.log_processing("Cobot Communication", "SUCCESS", {
-                        'payload_size': len(str(payload))
-                    })
-                    st.success("Data sent to cobot successfully!")
-                    return True
-                else:
-                    self.logger.log_processing("Cobot Communication", "ERROR", "Failed to send data")
-                    st.error("Failed to send data to cobot")
-                    return False
-        except Exception as e:
-            self.logger.log_error(f"Cobot communication error: {str(e)}")
-            st.error(f"Error communicating with cobot: {str(e)}")
-            return False
-
-class SystemStatusHandler:
-    """Class to handle system status and diagnostics"""
-    def __init__(self):
-        self.logger = DataLogger()
-
-    def show_system_status(self):
-        st.markdown("### 🔧 System Status Dashboard")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("#### 📊 Processing Statistics")
-            if st.session_state['processing_history']:
-                df = pd.DataFrame(st.session_state['processing_history'])
-                success_rate = (df['status'] == 'SUCCESS').mean() * 100
-                st.metric("Success Rate", f"{success_rate:.1f}%")
-                
-                # Group by action and status
-                action_stats = df.groupby(['action', 'status']).size().unstack(fill_value=0)
-                st.bar_chart(action_stats)
-        
-        with col2:
-            st.markdown("#### ⚠️ Error Log")
-            if st.session_state['error_log']:
-                error_df = pd.DataFrame(st.session_state['error_log'])
-                st.dataframe(error_df)
-            else:
-                st.info("No errors logged")
-        
-        st.markdown("#### 💾 Storage Status")
-        if os.path.exists(RECORDING_DIR):
-            total_size = 0
-            file_count = 0
-            for dirpath, dirnames, filenames in os.walk(RECORDING_DIR):
-                for f in filenames:
-                    fp = os.path.join(dirpath, f)
-                    total_size += os.path.getsize(fp)
-                    file_count += 1
-            
-            col3, col4 = st.columns(2)
-            with col3:
-                st.metric("Total Files", file_count)
-            with col4:
-                st.metric("Total Size", f"{total_size / (1024*1024):.1f} MB")
-
-def main():
-    st.set_page_config(
-        page_title="Advanced Video Processing",
-        page_icon="🎥",
-        layout="wide"
+    uploaded_file = st.file_uploader(
+        "Drop your video file here",
+        type=["mp4", "avi", "mkv"],
+        help="Supported formats: MP4, AVI, MKV"
     )
     
-    # Initialize session state
-    SessionState()
-    
-    # Create UI components
-    ui = UIManager()
-    mode = ui.create_sidebar()
-    ui.create_header()
-    
-    # Handle different modes
-    if mode == "Live Feed":
-        recording_handler = VideoRecordingHandler()
-        recording_handler.handle_live_feed()
-    
-    elif mode == "Recording":
-        st.markdown("### 📹 Video Recording")
-        tabs = st.tabs(["New Recording", "Upload Video", "Recording History"])
-        
-        with tabs[0]:
-            recording_handler = VideoRecordingHandler()
-            recording_handler.handle_live_feed()
-        
-        with tabs[1]:
-            uploaded_file = st.file_uploader("Upload Video", type=['mp4', 'avi', 'mov'])
-            if uploaded_file:
-                st.session_state['current_video'] = uploaded_file
-                st.video(uploaded_file)
-                
-                if st.button("Process Uploaded Video"):
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_file:
-                        tmp_file.write(uploaded_file.getvalue())
-                        analysis_handler = AnalysisHandler()
-                        analysis_handler.analyze_video(tmp_file.name)
-        
-        with tabs[2]:
-            if os.path.exists(RECORDING_DIR):
-                recordings = []
-                for root, dirs, files in os.walk(RECORDING_DIR):
-                    for file in files:
-                        if file.endswith(('.mp4', '.avi', '.mov')):
-                            recordings.append(os.path.join(root, file))
-                
-                if recordings:
-                    selected_recording = st.selectbox("Select Recording", recordings)
-                    if selected_recording:
-                        st.video(selected_recording)
-                        if st.button("Analyze Selected Recording"):
-                            analysis_handler = AnalysisHandler()
-                            analysis_handler.analyze_video(selected_recording)
-                else:
-                    st.info("No recordings found")
-    
-    elif mode == "Analysis":
-        st.markdown("### 🔍 Analysis")
-        tabs = st.tabs(["Video Analysis", "Object Detection", "Trajectory Generation"])
-        
-        with tabs[0]:
-            if st.session_state.get('current_video'):
-                if st.button("Analyze Current Video"):
-                    analysis_handler = AnalysisHandler()
-                    analysis_handler.analyze_video(st.session_state['current_video'])
-            else:
-                st.info("Please upload or record a video first")
-        
-        with tabs[1]:
-            if st.session_state.get('current_frame'):
-                st.image(st.session_state['current_frame']['color'], caption="Current Frame")
-                if st.button("Detect Objects"):
-                    analysis_handler = AnalysisHandler()
-                    results = analysis_handler.detect_objects(
-                        st.session_state['current_frame']['color'],
-                        st.session_state['current_frame']['depth']
-                    )
-                    if results:
-                        trajectory_handler = TrajectoryHandler()
-                        trajectory = trajectory_handler.generate_trajectory(results)
-                        
-                        if trajectory is not None:
-                            cobot_handler = CobotHandler()
-                            payload = {
-                                "fundamental_actions": {
-                                    class_name: {"coordinates": coords.tolist()}
-                                    for class_name, coords in results.items()
-                                },
-                                "trajectory_data": trajectory.tolist()
-                            }
-                            cobot_handler.send_to_cobot(payload)
-            else:
-                st.info("Please capture a frame first")
-        
-        with tabs[2]:
-            if st.session_state.get('object_detection_results'):
-                if st.button("Generate New Trajectory"):
-                    trajectory_handler = TrajectoryHandler()
-                    trajectory_handler.generate_trajectory(st.session_state['object_detection_results'])
-            else:
-                st.info("Please perform object detection first")
-    
-    elif mode == "Results":
-        st.markdown("### 📊 Results Dashboard")
-        ui.show_results_tabs()
-    
-    elif mode == "System Status":
-        system_status = SystemStatusHandler()
-        system_status.show_system_status()
+    if not uploaded_file:
+        st.info("👆 Please upload a video file to continue")
+        return
 
+    with st.spinner("📝 Processing uploaded file..."):
+        tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+        tfile.write(uploaded_file.read())
+        video_path = tfile.name
+        
+        # Convert video in-place for demonstration
+        convert_video(video_path, video_path)
+    
+    st.success("✅ Video processed successfully")
+    
+    st.markdown("### 🎬 Video Preview")
+    st.video(video_path)
+    
+    st.markdown("### 🔍 Analysis Options")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        analyze_video = st.checkbox(
+            "Run video analysis",
+            value=True,
+            help="Perform detailed analysis of the video content"
+        )
+        
+        if analyze_video:
+            if st.button("🚀 Start Analysis", use_container_width=True):
+                process_saved_recording(video_path)
+    
+    with col2:
+        if st.button("🎯 Run Inference", use_container_width=True):
+            st.session_state["run_inference"] = True
+            st.rerun()
+
+###############################################################################
+#                    PROCESSING LOGIC AND VIDEO ANALYSIS
+###############################################################################
+
+def process_saved_recording(video_path):
+    """Perform the entire pipeline (upload, analysis, annotation, RLEF upload, etc.)."""
+    st.markdown("### 🔄 Processing Video")
+    
+    progress_placeholder = st.empty()
+    status_placeholder = st.empty()
+    result_placeholder = st.empty()
+
+    base_recording_dir = st.session_state["base_dir"]
+    rec_subdir = st.session_state["rec_name"]
+    recording_dir = os.path.join(base_recording_dir, rec_subdir)
+    
+    try:
+        # Initialize progress and payload
+        progress_bar = progress_placeholder.progress(0)
+        status_placeholder.markdown("⏳ Initializing process...")
+        payload_for_cobot_client = {}
+        
+        # Load payload from a user-configurable path
+        payload_path = st.session_state["payload_path"]
+        with st.spinner("📋 Loading configuration..."):
+            with open(payload_path, "r") as file:
+                payload = json.load(file)
+            progress_bar.progress(15)
+            status_placeholder.markdown("✅ Configuration loaded")
+
+        # Analyze video (upload to GCP + Gemini)
+        analyzer = VideoAnalyzer(payload=payload)
+        with st.spinner("☁️ Uploading to cloud..."):
+            # Example: "test1.mp4" can be replaced or made dynamic
+            gcp_url = analyzer.upload_video_to_bucket("test1.mp4", video_path)
+            progress_bar.progress(30)
+            status_placeholder.markdown("✅ Video uploaded to cloud")
+        
+        # Get annotations from Gemini
+        with st.spinner("🔍 Analyzing video content..."):
+            annotations = analyzer.get_gemini_response(gcp_url=gcp_url)
+            if annotations:
+                with result_placeholder.expander("📊 View Analysis Results", expanded=True):
+                    st.json(annotations)
+            progress_bar.progress(45)
+            status_placeholder.markdown("✅ Analysis complete")
+        
+        # Upload to RLEF
+        rlef_uploader = VideoUploader()
+        with st.spinner("📤 Uploading results to RLEF..."):
+            status, rlef_response_text = rlef_uploader.upload_to_rlef(
+                rlef_url="https://autoai-backend-exjsxe2nda-uc.a.run.app/resource/",
+                video_filepath=video_path,
+                video_annotations=annotations,
+                csv_filepath=None
+            )
+            progress_bar.progress(60)
+            if status == 200:
+                status_placeholder.markdown("✅ Results uploaded to RLEF")
+            else:
+                st.warning("⚠️ There are issues with RLEF upload")
+
+        # Object detection + coordinate transformation
+        with st.spinner("📍 Processing coordinates and generating predictions..."):
+            detector = ObjectDetector(api_key=GEMINI_API_KEY, recording_dir=recording_dir)
+            response_coordinates = detector.get_real_world_coordinates(annotations)
+            
+            if response_coordinates:
+                with result_placeholder.expander("🎯 Coordinate Results", expanded=True):
+                    st.json(response_coordinates)
+            
+            progress_bar.progress(75)
+            status_placeholder.markdown("✅ Coordinates processed")
+            
+            # Prepare partial payload for Cobot
+            payload_for_cobot_client["fundamental_actions"] = {
+                key: {
+                    **value,
+                    "coordinates": (
+                        value["coordinates"].tolist() 
+                        if isinstance(value["coordinates"], np.ndarray) 
+                        else value["coordinates"]
+                    )
+                }
+                for key, value in response_coordinates.items()
+            }
+            payload_for_cobot_client["rlef_resource_id"] = rlef_response_text['_id']
+            payload_for_cobot_client["video_gcp_url"] = gcp_url
+            
+            # Attempt to read HAMER predictions
+            # Adjust if your actual path is different
+            hamer_output_path = os.path.join(recording_dir, "hamer_output", "predictions_hamer.csv")
+            try:
+                with open(hamer_output_path, "r") as file:
+                    csv_hamer_output = file.read()
+                payload_for_cobot_client["trajectory_csv"] = csv_hamer_output
+                status_placeholder.markdown("✅ HAMER predictions loaded")
+            except Exception as e:
+                st.warning(f"⚠️ Could not load HAMER predictions: {str(e)}")
+                payload_for_cobot_client["trajectory_csv"] = ""
+            
+            progress_bar.progress(90)
+
+        # Send results to Cobot
+        with st.spinner("🤖 Sending data to Cobot..."):
+            cobot_client = CobotClient(ip="192.168.0.149", port="8001")
+            cobot_client_status = cobot_client.send_trajectory_data(payload_for_cobot_client)
+            
+            if cobot_client_status:
+                status_placeholder.markdown("✅ Data sent to Cobot successfully")
+                with result_placeholder.expander("🤖 Cobot Client Payload", expanded=False):
+                    st.json(payload_for_cobot_client)
+            else:
+                st.warning("⚠️ Cobot client response indicates potential issues")
+            
+        # Update Trajectory in RLEF (upload CSV)
+        with st.spinner("🤖 Updating the Trajectory in RLEF..."):
+            signed_url = get_signed_url(rlef_response_text['_id'], "predictions_hamer.csv")
+            if signed_url:
+                upload_hdf5_file(signed_url, hamer_output_path)
+                status_placeholder.markdown("✅ Trajectory updated in RLEF")
+            else:
+                st.warning("⚠️ Failed to update trajectory in RLEF")
+            progress_bar.progress(100)
+        
+        st.success("🎉 All processing steps completed successfully!")
+        
+    except Exception as e:
+        st.error(f"❌ Error during processing: {str(e)}")
+        progress_placeholder.empty()
+        status_placeholder.empty()
+
+
+def filter_action(input_csv, output_csv):
+    """Filter rows (20 to 60 inclusive) from a CSV and save to another CSV."""
+    df = pd.read_csv(input_csv)
+    filtered_df = df.iloc[20:61]
+    filtered_df.to_csv(output_csv, index=False)
+
+
+def take_images_with_classes_for_inference(
+    depth_imagepath=None, 
+    rgb_imagepath=None, 
+    depth_im=None, 
+    rgb_im=None, 
+    object_classes=['soda_can', 'glass_cup']
+):
+    """
+    Run object detection inference using Gemini API without hardcoded paths.
+    By default, tries to load from session-based 'captured_frames'.
+    """
+    base_recording_dir = st.session_state["base_dir"]
+    rec_subdir = st.session_state["rec_name"]
+    recording_dir = os.path.join(base_recording_dir, rec_subdir)
+    
+    # Provide defaults if not specified
+    if depth_imagepath is None:
+        depth_imagepath = os.path.join(recording_dir, "captured_frames", "image_0.npy")
+    if rgb_imagepath is None:
+        rgb_imagepath = os.path.join(recording_dir, "captured_frames", "image_0.jpg")
+
+    try:
+        if rgb_im is not None and depth_im is not None:
+            # If images were directly passed in memory
+            pass
+        else:
+            # Otherwise, load from filepaths
+            st.markdown("### 🔄 Running Object Detection")
+            status_placeholder = st.empty()
+            result_placeholder = st.empty()
+            rgb_im = Image.open(rgb_imagepath)
+            depth_im = np.load(depth_imagepath)
+        
+        with st.spinner("⏳ Getting info from the new scene..."):
+            detector = ObjectDetector(api_key=GEMINI_API_KEY, recording_dir=recording_dir)
+            object_classes = object_classes if object_classes else ['soda_can', 'white_mug']
+            
+            with st.spinner("🔍 Detecting object centers..."):
+                object_centers = detector.get_object_centers(rgb_im, object_classes[:2])
+                if object_centers:
+                    object_1_center = object_centers[object_classes[0]][0]
+                    object_2_center = object_centers[object_classes[1]][0]
+                    status_placeholder.markdown("✅ Object detection complete!")
+                    with result_placeholder.expander("📊 Object Detection Results", expanded=True):
+                        st.json(object_centers)
+                else:
+                    st.warning("⚠️ No object centers detected")
+                    return
+                
+            with st.spinner("🔍 Computing Real World Coordinates..."):
+                if object_1_center is not None and object_2_center is not None:
+                    # Use transform and depth to get real-world coords
+                    obj1_rw = transform_coordinates(
+                        get_real_world_coordinates(
+                            pixel_x=object_1_center[0], 
+                            pixel_y=object_1_center[1],
+                            image_path=depth_imagepath
+                        )
+                    )
+                    obj2_rw = transform_coordinates(
+                        get_real_world_coordinates(
+                            pixel_x=object_2_center[0],
+                            pixel_y=object_2_center[1],
+                            image_path=depth_imagepath
+                        )
+                    )
+                    with result_placeholder.expander("🌍 Real World Coordinates", expanded=False):
+                        st.json({
+                            object_classes[0]: [float(coord) for coord in obj1_rw],
+                            object_classes[1]: [float(coord) for coord in obj2_rw]
+                        })
+                else:
+                    st.warning("⚠️ Object centers are None")
+                    return
+
+                # Convert from mm to meters if needed
+                obj1_rw_m = [coord / 1000 for coord in obj1_rw]
+                obj2_rw_m = [coord / 1000 for coord in obj2_rw]
+
+        # Run model inference to generate trajectory
+        with st.spinner("🧠 Generating trajectory from model..."):
+            container = [[*obj2_rw, *obj1_rw]]  # Example container
+            preds = predict_trajectory(st.session_state["model_path"], container)
+
+            # Save CSV
+            csv_filename = f"predicted_trajectory_{int(time.time())}.csv"
+            csv_savepath = os.path.join(recording_dir, csv_filename)
+            save_predictions_to_csv(preds, csv_savepath)
+            filter_action(csv_savepath, csv_savepath)
+            with open(csv_savepath, "r") as file:
+                csv_contents = file.read()
+
+        # Prepare the payload
+        cobot_client_payload = {
+            "fundamental_actions": {},
+            "trajectory_csv": csv_contents
+        }
+        frontend_payload = {
+            "objects": {},
+            "trajectory_csv": csv_contents
+        }
+        for obj_class, rw_coords in zip(object_classes, [obj1_rw_m, obj2_rw_m]):
+            cobot_client_payload['fundamental_actions'][obj_class] = {"coordinates": rw_coords}
+            frontend_payload['objects'][obj_class] = {"coordinates": rw_coords}
+
+        # Send to Cobot
+        cobot_client = CobotClient(ip="192.168.0.149", port="8001")
+        with st.spinner("🤖 Sending data to Cobot..."):
+            status = cobot_client.send_trajectory_data(cobot_client_payload)
+            if status:
+                status_placeholder.markdown("✅ Data sent to Cobot successfully")
+                with result_placeholder.expander("🤖 Cobot Client Payload", expanded=False):
+                    st.json(frontend_payload)
+            else:
+                st.warning("⚠️ Cobot client response indicates potential issues")
+
+    except Exception as e:
+        st.error(f"❌ Error during object detection: {str(e)}")
+
+###############################################################################
+#                               MAIN APP
+###############################################################################
+
+def main():
+    """Main entry point for the Streamlit application."""
+    st.set_page_config(
+        page_title="Video Processing Platform",
+        page_icon="🎥",
+        layout="centered"
+    )
+
+    # 1. Initialize session variables
+    initialize_session_state()
+
+    # 2. Configure paths in the sidebar (no more hardcoded paths!)
+    configure_paths()
+
+    # 3. Create the main sidebar for mode selection
+    mode = create_sidebar()
+
+    # 4. Create a header for the main page
+    create_header()
+    
+    # 5. Handle different modes
+    if mode == "Live Video Feed":
+        handle_live_feed()
+    elif mode == "8-Second Recording":
+        handle_timed_recording()
+    elif mode == "Run Inference":
+        take_images_with_classes_for_inference()
+    else:  # "Upload Video File"
+        handle_uploaded_file()
+
+# Run the app
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
         st.session_state["run"] = False
-        st.stop()
-    except Exception as e:
-        DataLogger.log_error(f"Application error: {str(e)}")
-        st.error(f"Application error: {str(e)}")
         st.stop()

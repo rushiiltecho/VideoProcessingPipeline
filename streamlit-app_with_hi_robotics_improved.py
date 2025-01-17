@@ -167,7 +167,7 @@ def handle_live_feed():
         status_col1, status_col2 = st.columns(2)
         with status_col1:
             st.metric("Recording Status", 
-                     "Active 🟢" if st.session_state.get("recording_status", False) else "Inactive 🔴")
+                    "Active 🟢" if st.session_state.get("recording_status", False) else "")
         with status_col2:
             if st.session_state.get("recording_status", False):
                 st.metric("Frames Captured", recorder.frame_count if recorder else 0)
@@ -578,7 +578,7 @@ def filter_action(input_csv, output_csv):
     # Save to CSV
     filtered_df.to_csv(output_csv, index=False)
 
-def take_images_with_classes_for_inference(depth_imagepath = 'recordings/Recorded_Demo/captured_frames/image_0.npy', rgb_imagepath = 'recordings/Recorded_Demo/captured_frames/image_0.jpg', depth_im=None, rgb_im=None, object_classes=['soda_can', 'white_mug']):
+def take_images_with_classes_for_inference(depth_imagepath = 'recordings/Recorded_Demo/captured_frames/image_0.npy', rgb_imagepath = 'recordings/Recorded_Demo/captured_frames/image_0.jpg', depth_im=None, rgb_im=None, object_classes=['soda_can', 'glass_cup']):
     """Run object detection inference using Gemini API"""
     try:
         if rgb_im is not None and depth_im is not None:
